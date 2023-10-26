@@ -21,3 +21,7 @@ tqdm==4.66.1
 transformers==4.34.1
 typing_extensions==4.8.0
 urllib3==2.0.7
+ipynb
+datasets
+rouge_score
+matplotlib
