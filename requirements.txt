@@ -25,3 +25,5 @@ ipynb
 datasets
 rouge_score
 matplotlib
+evaluate
+accelerate --install-option='-U'
