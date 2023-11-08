@@ -27,3 +27,6 @@ rouge_score
 matplotlib
 evaluate
 accelerate --install-option='-U'
+ratelimiter
+py7zr
+plotly
