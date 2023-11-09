@@ -3,8 +3,8 @@ import json
 import numpy as np
 
 def init():
-    # Admin globals
-    global new_col_names, keep_cols, rng
+    # Housekeeping globals
+    global new_col_names, keep_cols, rng, max_src_length, max_target_length
     new_col_names = {
         'article':'document',
         'highlights':'summary',
@@ -12,8 +12,19 @@ def init():
         'tldr':'summary',
         'dialogue':'document'
     }
+    max_src_length = {
+        'news':1024,
+        'dialogue':512,
+        'reddit':1024,
+    }
+    max_target_length = {
+        'news':256,
+        'dialogue':256,
+        'reddit':256,
+    }
     keep_cols = ['document', 'summary', 'id']
     rng = np.random.default_rng()
+    sample_idxs = np.array([12533, 13142, 9985, 6799, 3970, 7474, 7520, 11167, 4330, 357, 16035, 11539, 12455, 475, 8286, 5405, 7215, 15558, 2597, 6688, 10471, 13918, 9739, 7910, 1864, 10679, 3770, 13883, 12911, 9004, 13607, 11250, 5718, 10430, 10488, 961, 12333, 2321, 14797, 12491, 7327, 16221])
     # Globals for toxicity eval
     global API_KEY, client
     API_KEY = 'AIzaSyDcA-LYHVNateEydAvPLg5AaF19sZwM-mY'
@@ -28,3 +39,6 @@ def init():
     global API_URL, headers
     API_URL = "https://api-inference.huggingface.co/models/s-nlp/roberta-base-formality-ranker"
     headers = {"Authorization": "Bearer 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"}
+    # Globals for HuggingFace
+    global hug_token
+    hug_token = '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'
