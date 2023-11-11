@@ -4,6 +4,7 @@ import os
 import pandas as pd
 from datasets import concatenate_datasets, load_dataset, DatasetDict, Dataset
 sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs"))
+sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs"))
 import src.Measurement.globals as globals
 globals.init()
 import numpy as np

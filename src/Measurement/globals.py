@@ -1,6 +1,9 @@
 from googleapiclient import discovery
 import json
 import numpy as np
+import sys
+import os
+sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs"))
 
 def init():
     # Housekeeping globals
@@ -30,8 +33,8 @@ def init():
     }
     keep_cols = ['document', 'summary', 'id']
     rng = np.random.default_rng()
-    # sample_idxs = np.array([12533, 13142, 9985, 6799, 3970, 7474, 7520, 11167, 4330, 357, 16035, 11539, 12455, 475, 8286, 5405, 7215, 15558, 2597, 6688, 10471, 13918, 9739, 7910, 1864, 10679, 3770, 13883, 12911, 9004, 13607, 11250, 5718, 10430, 10488, 961, 12333, 2321, 14797, 12491, 7327, 16221])
-    sample_idxs = [i for i in range(0,10)]
+    sample_idxs = np.array([12533, 13142, 9985, 6799, 3970, 7474, 7520, 11167, 4330, 357, 16035, 11539, 12455, 475, 8286, 5405, 7215, 15558, 2597, 6688, 10471, 13918, 9739, 7910, 1864, 10679, 3770, 13883, 12911, 9004, 13607, 11250, 5718, 10430, 10488, 961, 12333, 2321, 14797, 12491, 7327, 16221])
+    # sample_idxs = [i for i in range(0,10)]
     # Globals for toxicity eval
     global API_KEY, client
     API_KEY = 'AIzaSyDcA-LYHVNateEydAvPLg5AaF19sZwM-mY'
@@ -40,7 +43,6 @@ def init():
         "v1alpha1",
         developerKey=API_KEY,
         discoveryServiceUrl="https://commentanalyzer.googleapis.com/$discovery/rest?version=v1alpha1",
-        static_discovery=False,
     )
     # Globals for formality eval
     global API_URL, headers

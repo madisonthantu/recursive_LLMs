@@ -325,12 +325,23 @@ class DataTrainingArguments:
             self.val_max_target_length = self.max_target_length
 
 
+dataset_names = [
+    "dialogue",
+    "news",
+    "reddit"
+]
+
+model_names = [
+    't5',
+    'bart',
+    'gpt'
+]
+
 summarization_name_mapping = {
     "cnn_dailymail": ("article", "highlights"),
     "samsum": ("dialogue", "summary"),
     "reddit": ("documents", "tldr")
 }
-
 
 def main():
     # print(globals.emoji_dict)
@@ -360,6 +371,18 @@ def main():
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_summarization", model_args, data_args)
+    
+    # print(summarization_name_mapping)
+    # print(data_args.dataset_name)
+    assert(data_args.dataset_name in dataset_names), "Must supply valid dataset name"
+    assert(model_names[0] in training_args.output_dir or model_names[1] in training_args.output_dir or model_names[2] in training_args.output_dir), "Name of base model must be a substring of the output directory"
+    if data_args.test_file is not None:
+        assert(data_args.dataset_name in data_args.test_file)
+    if data_args.validation_file is not None:
+        assert(data_args.dataset_name in data_args.validation_file)
+    if data_args.train_file is not None:
+        assert(data_args.dataset_name in data_args.train_file)
+    assert("gen" in training_args.output_dir.lower())
 
     # Setup logging
     logging.basicConfig(
@@ -427,7 +450,7 @@ def main():
         #
         # In distributed training, the load_dataset function guarantee that only one local process can concurrently
         # download the dataset.
-        if data_args.dataset_name is not None:
+        if data_args.dataset_name is not None and data_args.train_file is None and data_args.validation_file is None and data_args.test_file is None:
             # Downloading and loading a dataset from the hub.
             raw_datasets = load_dataset(
                 data_args.dataset_name,
@@ -780,27 +803,33 @@ def main():
                         predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
                     )
                     predictions = [pred.strip() for pred in predictions]
-                    output_prediction_path = 'Data/initial_datasets/dialogue'#data_args.test_file
+                    output_prediction_file = os.path.join(training_args.output_dir, "generated_predictions.txt")
+                    with open(output_prediction_file, "w") as writer:
+                        writer.write("\n".join(predictions))
+                    
+                    output_results_path = os.path.join("Data/synthetic_datasets", str(data_args.dataset_name))
+                    if not os.path.exists(output_results_path):
+                        os.makedirs(output_results_path)
                     synthetic_df = pd.read_csv(data_args.test_file)
                     synthetic_df['summary'] = predictions
-                    synthetic_df.to_csv(os.path.join(output_prediction_path, 'new_dataset.csv'), index=False)
+                    synthetic_df.to_csv(os.path.join(output_results_path, 'full_data.csv'), index=False)
                     dev_dataset = train_test_split(synthetic_df)
-                    dev_dataset['train'].to_csv(os.path.join(output_prediction_path, 'new_training_dataset.csv'), index=False)
-                    dev_dataset['test'].to_csv(os.path.join(output_prediction_path, 'new_validation_dataset.csv'), index=False)
+                    dev_dataset['train'].to_csv(os.path.join(output_results_path, 'training_data.csv'), index=False)
+                    dev_dataset['test'].to_csv(os.path.join(output_results_path, 'validation_data.csv'), index=False)
                     dataset_specs = {
                         'generation':gen_num, 
                         'subject':data_args.dataset_name
                     }
-                    synthetic_dataset_measurements = Measurement(synthetic_df, dataset_specs, no_samples=20, DEBUG=True)
+                    synthetic_dataset_measurements = Measurement(synthetic_df, dataset_specs, DEBUG=True)
                     synthetic_dataset_results = synthetic_dataset_measurements.measure()
+                    output_measurements_path = os.path.join(training_args.output_dir, 'results')
+                    if not os.path.exists(output_measurements_path):
+                        os.makedirs(output_measurements_path)
                     save_files_to_pkl({
-                        os.path.join(training_args.output_dir, 'results.pkl')   : synthetic_dataset_results,
-                        os.path.join(training_args.output_dir, 'config.pkl')    : dataset_specs
+                        os.path.join(output_measurements_path, 'measurements.pkl')   : synthetic_dataset_results,
+                        os.path.join(output_measurements_path, 'config.pkl')    : dataset_specs
                     })
-                    # writer = open(output_prediction_file, "a")
-                    # writer.write("\nGENERATION " + str(gen_num))
-                    # with writer:
-                    #     writer.write("\n".join(predictions))
+                    
 
         kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "summarization"}
         if data_args.dataset_name is not None:

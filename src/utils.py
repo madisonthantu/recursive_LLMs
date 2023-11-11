@@ -12,6 +12,7 @@ import logging
 import pandas as pd
 import textwrap
 sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS 6998/Final Project/recursive_LLMs"))
+sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs"))
 
 from datasets import concatenate_datasets, load_dataset, DatasetDict, Dataset
 

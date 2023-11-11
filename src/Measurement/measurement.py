@@ -15,6 +15,7 @@ from tqdm import tqdm
 import os
 
 sys.path.insert(1, '../Data')
+sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs/Data"))
 print(platform.platform())
 
 import src.Measurement.globals as globals
