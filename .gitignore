@@ -1,3 +1,15 @@
 langgen/
 *.un~
 .DS_Store
+*checkpoint.*
+*.model
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.langgen
+*.pyc
+*config.json
+*map.json
+*state.json
+*tokenizer.json

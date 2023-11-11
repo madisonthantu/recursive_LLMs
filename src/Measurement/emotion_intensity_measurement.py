@@ -1,6 +1,9 @@
 import pandas as pd
 import re
 import numpy as np
+import sys
+import os
+sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs"))
 
 
 def read_lexicon(lex_path):
@@ -20,7 +23,7 @@ def read_text(text_path, col_name):
 def process_df(
         input_text_path, 
         col_name = 'summary',
-        lex_dir_prefix = '/Users/madisonthantu/Desktop/COMS 6998/Final Project/recursive_LLMs/Data/NRC-Emotion-Intensity-Lexicon/OneFilePerEmotion/',
+        lex_dir_prefix = 'Data/NRC-Emotion-Intensity-Lexicon/OneFilePerEmotion/',
         lex_dir_suffix = '-NRC-Emotion-Intensity-Lexicon-v1.txt', 
         lex_names = ['anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust']
     ):
