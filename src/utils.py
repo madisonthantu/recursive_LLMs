@@ -11,11 +11,12 @@ import numpy as np
 import logging
 import pandas as pd
 import textwrap
+import json 
+
 sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS 6998/Final Project/recursive_LLMs"))
 sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs"))
 
 from datasets import concatenate_datasets, load_dataset, DatasetDict, Dataset
-
 from huggingface_hub import login
 
 
@@ -23,14 +24,25 @@ def init():
     login(token=globals.hug_token)
     
 
-def check_valid_path(file_path, file_name):
+def check_valid_path(file_path, file_name=None):
     if not os.path.isdir(file_path):
         raise Exception(f"Invalid file path supplied <{file_path}>")
-    if not os.path.isfile(os.path.join(file_path, file_name)):
-        raise Exception(f"Invalid file path supplied <{os.path.join(file_path, file_name)}>")
+    if file_name != None:
+        if not os.path.isfile(os.path.join(file_path, file_name)):
+            raise Exception(f"Invalid file path supplied <{os.path.join(file_path, file_name)}>")
+    
+
+def save_dict_to_json(file_path, file_name, my_dict):
+    check_valid_path(file_path)
+    for k, v in my_dict.items():
+        if isinstance(v, pd.Series):
+            my_dict[k] = v.tolist()
+    with open(os.path.join(file_path, file_name), "w") as outfile: 
+        json.dump(my_dict, outfile)
+    
     
 def load_pickle(file_path, file_name):
-    check_valid_path(file_path, file_name)
+    # check_valid_path(file_path, file_name)
     with open(os.path.join(file_path , file_name), 'rb') as f:
         return pickle.load(f)
     

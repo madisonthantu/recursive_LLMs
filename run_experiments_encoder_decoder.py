@@ -302,6 +302,14 @@ class DataTrainingArguments:
             )
         },
     )
+    DEBUG: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": (
+                "DEBUG option. Set to True to avoid certail assertion check (w.r.t. file paths and naming)."
+            )
+        },
+    )
 
     def __post_init__(self):
         if (
@@ -372,17 +380,17 @@ def main():
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_summarization", model_args, data_args)
     
-    # print(summarization_name_mapping)
-    # print(data_args.dataset_name)
-    assert(data_args.dataset_name in dataset_names), "Must supply valid dataset name"
-    assert(model_names[0] in training_args.output_dir or model_names[1] in training_args.output_dir or model_names[2] in training_args.output_dir), "Name of base model must be a substring of the output directory"
-    if data_args.test_file is not None:
-        assert(data_args.dataset_name in data_args.test_file)
-    if data_args.validation_file is not None:
-        assert(data_args.dataset_name in data_args.validation_file)
-    if data_args.train_file is not None:
-        assert(data_args.dataset_name in data_args.train_file)
-    assert("gen" in training_args.output_dir.lower())
+    assert(data_args.dataset_name in dataset_names), "Must supply valid <dataset_name>"
+    assert(model_names[0] in training_args.output_dir or model_names[1] in training_args.output_dir or model_names[2] in training_args.output_dir), "Must include <base_model_name> in output directory path"
+    if data_args.DEBUG != True:
+        if data_args.test_file is not None:
+            assert(data_args.dataset_name in data_args.test_file), "<test_data> path and <dataset_name> do not match"
+        if data_args.validation_file is not None:
+            assert(data_args.dataset_name in data_args.validation_file), "<validation_data> path and <dataset_name> do not match"
+        if data_args.train_file is not None:
+            assert(data_args.dataset_name in data_args.train_file), "<training_data> path and <dataset_name> do not match"
+    assert("gen" in training_args.output_dir.lower()), "Must include <generation_number> in output directory path"
+    assert(data_args.dataset_name in training_args.output_dir.lower()), "Must include <dataset_name> in output directory path"
 
     # Setup logging
     logging.basicConfig(
@@ -807,27 +815,30 @@ def main():
                     with open(output_prediction_file, "w") as writer:
                         writer.write("\n".join(predictions))
                     
-                    output_results_path = os.path.join("Data/synthetic_datasets", str(data_args.dataset_name))
-                    if not os.path.exists(output_results_path):
-                        os.makedirs(output_results_path)
+                    output_synthetic_data_path = os.path.join("Data/synthetic_datasets", str(data_args.dataset_name))
+                    if not os.path.exists(output_synthetic_data_path):
+                        os.makedirs(output_synthetic_data_path)
                     synthetic_df = pd.read_csv(data_args.test_file)
                     synthetic_df['summary'] = predictions
-                    synthetic_df.to_csv(os.path.join(output_results_path, 'full_data.csv'), index=False)
+                    synthetic_df.to_csv(os.path.join(output_synthetic_data_path, 'full_data.csv'), index=False)
                     dev_dataset = train_test_split(synthetic_df)
-                    dev_dataset['train'].to_csv(os.path.join(output_results_path, 'training_data.csv'), index=False)
-                    dev_dataset['test'].to_csv(os.path.join(output_results_path, 'validation_data.csv'), index=False)
+                    dev_dataset['train'].to_csv(os.path.join(output_synthetic_data_path, 'training_data.csv'), index=False)
+                    dev_dataset['test'].to_csv(os.path.join(output_synthetic_data_path, 'validation_data.csv'), index=False)
+                    
+                    output_measurements_path = os.path.join(training_args.output_dir, 'results')
+                    if not os.path.exists(output_measurements_path):
+                        os.makedirs(output_measurements_path)
                     dataset_specs = {
                         'generation':gen_num, 
                         'subject':data_args.dataset_name
                     }
                     synthetic_dataset_measurements = Measurement(synthetic_df, dataset_specs, DEBUG=True)
                     synthetic_dataset_results = synthetic_dataset_measurements.measure()
-                    output_measurements_path = os.path.join(training_args.output_dir, 'results')
-                    if not os.path.exists(output_measurements_path):
-                        os.makedirs(output_measurements_path)
+                    synthetic_dataset_results.update(dataset_specs)
                     save_files_to_pkl({
-                        os.path.join(output_measurements_path, 'measurements.pkl')   : synthetic_dataset_results,
-                        os.path.join(output_measurements_path, 'config.pkl')    : dataset_specs
+                        os.path.join(
+                            output_measurements_path, 'dataset_measurements.pkl'
+                        ):synthetic_dataset_results
                     })
                     
 

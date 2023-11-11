@@ -20,7 +20,7 @@ print(platform.platform())
 
 import src.Measurement.globals as globals
 globals.init()
-from pathlib import Path
+
 from googleapiclient.errors import HttpError
 from googleapiclient import discovery
 import requests
@@ -72,10 +72,13 @@ class Measurement:
         ):
         self.data_df = data_df.copy()
         self.rate_limiter = RateLimiter(**rate_limiter_params)
-        assert(Path(lex_dir_prefix).exists())
+        assert(os.path.exists(lex_dir_prefix))
         self.lex_dir_prefix = lex_dir_prefix
         
         assert(k in dataset_specs.keys() for k in ['generation', 'subject']), "Must supply the dataset specs"
+        if DEBUG:
+            no_samples = 10
+            globals.sample_idxs = [i for i in range(0,10)]
         self.config = {
             'subject': dataset_specs['subject'],
             'generation': dataset_specs['generation'],
@@ -111,12 +114,10 @@ class Measurement:
                     formality_scores[idx] = response[0][0]['score']
                 except:
                     assert('error' in response.keys())
-                    print(f"Formality Eval - Time limit exceeded, sleeping for 10sec, No. samples evaluated = {idx}")
+                    print(f"\nFormality Eval - Time limit exceeded, sleeping for 10sec, No. samples evaluated = {idx}")
                     time.sleep(10)
                     idx -= 1
-        if self.config['DEBUG']:
-            return formality_scores, sample_idxs
-        return formality_scores
+        return formality_scores, sample_idxs
     
     
     def evaluate_toxicity(self):
@@ -130,12 +131,10 @@ class Measurement:
                     response = toxicity_query(self.data_df.iloc[int(sample_idxs[idx])]['summary'])
                     toxicity_scores[idx] = response['attributeScores']['TOXICITY']['summaryScore']['value']
                 except HttpError:
-                    print(f"Toxicity Eval - Time limit exceeded, sleeping for 69sec, No. samples evaluated = {idx}")
+                    print(f"\nToxicity Eval - Time limit exceeded, sleeping for 69sec, No. samples evaluated = {idx}")
                     time.sleep(69)
                     idx -= 1
-        if self.config['DEBUG']:
-            return toxicity_scores, sample_idxs
-        return toxicity_scores
+        return toxicity_scores, sample_idxs
     
     
     def evaluate_emotion_intensity(
@@ -191,12 +190,9 @@ class Measurement:
         formality_eval = self.evaluate_formality()
         toxicity_eval = self.evaluate_toxicity()
         
-        if self.config['DEBUG']:
-            measurements['formality_scores'], measurements['formality_sample_idxs'] = formality_eval
-            measurements['toxicity_scores'], measurements['toxicity_sample_idxs'] = toxicity_eval
-        else:
-            measurements['formality_scores'] = formality_eval
-            measurements['toxicity_scores'] = toxicity_eval
+        measurements['formality_scores'], measurements['formality_sample_idxs'] = formality_eval
+        measurements['toxicity_scores'], measurements['toxicity_sample_idxs'] = toxicity_eval
+        
         measurements['formality_mean'] = measurements['formality_scores'].mean()
         measurements['toxicity_mean'] = measurements['toxicity_scores'].mean()
         
