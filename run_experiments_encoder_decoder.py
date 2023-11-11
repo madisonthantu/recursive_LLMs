@@ -157,11 +157,11 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
-    text_column: Optional[str] = field(
+    text_column: str = field(
         default=None,
         metadata={"help": "The name of the column in the datasets containing the full texts (for summarization)."},
     )
-    summary_column: Optional[str] = field(
+    summary_column: str = field(
         default=None,
         metadata={"help": "The name of the column in the datasets containing the summaries (for summarization)."},
     )
@@ -359,7 +359,6 @@ def main():
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, Seq2SeqTrainingArguments))
-    # print(dir(parser))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -391,6 +390,9 @@ def main():
             assert(data_args.dataset_name in data_args.train_file), "<training_data> path and <dataset_name> do not match"
     assert("gen" in training_args.output_dir.lower()), "Must include <generation_number> in output directory path"
     assert(data_args.dataset_name in training_args.output_dir.lower()), "Must include <dataset_name> in output directory path"
+    assert(data_args.text_column is not None), "Must specify the name of the <text_column>"
+    assert(data_args.summary_column is not None), "Must specify the name of the <summary_column>"
+    
 
     # Setup logging
     logging.basicConfig(
@@ -820,6 +822,7 @@ def main():
                         os.makedirs(output_synthetic_data_path)
                     synthetic_df = pd.read_csv(data_args.test_file)
                     synthetic_df['summary'] = predictions
+                    print("synthetic_df shape: ", synthetic_df.shape)
                     synthetic_df.to_csv(os.path.join(output_synthetic_data_path, 'full_data.csv'), index=False)
                     dev_dataset = train_test_split(synthetic_df)
                     dev_dataset['train'].to_csv(os.path.join(output_synthetic_data_path, 'training_data.csv'), index=False)
