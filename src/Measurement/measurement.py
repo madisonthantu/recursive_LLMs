@@ -1,5 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import pandas as pd
 
 from datasets import load_dataset_builder, load_dataset, concatenate_datasets
@@ -12,6 +12,7 @@ import time
 from ratelimiter import RateLimiter
 from itertools import chain
 from tqdm import tqdm
+import os
 
 sys.path.insert(1, '../Data')
 print(platform.platform())
@@ -65,7 +66,7 @@ class Measurement:
             dataset_specs,
             rate_limiter_params={'max_calls':64, 'period':10},
             no_samples=1000,
-            lex_dir_prefix = '/Users/madisonthantu/Desktop/COMS 6998/Final Project/recursive_LLMs/Data/NRC-Emotion-Intensity-Lexicon/OneFilePerEmotion/',
+            lex_dir_prefix = 'Data/NRC-Emotion-Intensity-Lexicon/OneFilePerEmotion/',
             DEBUG=False
         ):
         self.data_df = data_df.copy()

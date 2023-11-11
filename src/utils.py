@@ -111,3 +111,9 @@ def train_val_test_split(dataset):
         'validation': dev_data_dict['train'],
         'test': dev_data_dict['test']
     })
+    
+    
+def train_test_split(df):
+    dataset = Dataset.from_pandas(df)
+    data_dict = dataset.train_test_split(test_size=0.3)
+    return data_dict
