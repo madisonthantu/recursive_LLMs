@@ -16,7 +16,8 @@ from tqdm import tqdm
 sys.path.insert(1, '../Data')
 print(platform.platform())
 
-import globals
+import src.Measurement.globals as globals
+globals.init()
 from pathlib import Path
 from googleapiclient.errors import HttpError
 from googleapiclient import discovery
@@ -41,17 +42,6 @@ def read_csv_dataset(text_path):
     return text_df
 
 
-def load_dataset_from_huggingface(model_strs):
-    data = load_dataset(*model_strs)
-    text_df = pd.DataFrame()
-    for k in data.keys():
-        text_df = pd.concat([text_df, data[k].to_pandas()])
-    text_df = text_df.rename(columns=globals.new_col_names)
-    if 'id' in text_df.columns:
-        return text_df[['id', 'document', 'summary']]
-    return text_df[['document', 'summary']]
-
-
 def toxicity_query(text):
     analyze_request = {
         'comment': { 'text': text },
@@ -64,9 +54,7 @@ def toxicity_query(text):
 def preprocess_dataset(df):
     text_df = df.rename(columns=globals.new_col_names)
     text_df['summary'] = text_df['summary'].apply(lambda sentence: re.findall(r'\w+', sentence.lower()))
-    if 'id' in text_df.columns:
-        return text_df[['id', 'document', 'summary']]
-    return text_df[['document', 'summary']]
+    return text_df[['id', 'document', 'summary']]
 
 
 
@@ -108,6 +96,7 @@ class Measurement:
     
     
     def evaluate_formality(self):
+        print("Evaluating formality ...")
         sample_idxs = globals.rng.choice(self.data_df.shape[0], size=self.config['no_samples'], replace=False)
         formality_scores = np.zeros(self.config['no_samples'])
         print("Evaluating formality ...")
@@ -129,6 +118,7 @@ class Measurement:
     
     
     def evaluate_toxicity(self):
+        print("Evaluating toxicity ...")
         sample_idxs = globals.rng.choice(self.data_df.shape[0], size=self.config['no_samples'], replace=False).astype(int)
         toxicity_scores = np.zeros(self.config['no_samples'])
         print("Evaluating toxicity")
@@ -157,6 +147,7 @@ class Measurement:
             the value corresponds to the sum of intensity scores divided by the 
             number of tokens in the summary.
         """
+        print("Evaluating emotion intensity ...")
         df = preprocess_dataset(self.data_df)
         emot_scores_df = pd.DataFrame()
         summ_tok_count = df['summary'].apply(lambda x: len(x)).to_numpy()
@@ -176,6 +167,8 @@ class Measurement:
         emot_scores_df = emot_scores_df.fillna(0)
         emot_scores_df['num_summary_tokens'] = summ_tok_count
         emot_scores_df["weighted_avg"] = weighted_avg
+        emot_scores_df['id'] = df['id']
+        emot_scores_df.set_index('id')
             
         return emot_scores_df.iloc[:,::-1]
         
@@ -183,7 +176,8 @@ class Measurement:
     def measure(self):
         measurements = {}
         
-        self.measurements['samples'] = self.data_df.iloc[globals.sample_idxs]['summary']
+        measurements['samples'] = self.data_df.iloc[globals.sample_idxs]['summary']
+        measurements['sample_idxs'] = globals.sample_idxs
         
         self.data_df['document_toks'] = self.data_df['document'].apply(lambda sentence: re.findall(r'\w+', sentence.lower()))
         self.data_df['summary_toks'] = self.data_df['summary'].apply(lambda sentence: re.findall(r'\w+', sentence.lower()))
