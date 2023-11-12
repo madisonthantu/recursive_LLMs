@@ -27,13 +27,19 @@ def main():
     # for dataset_name, dataset_config in dataset_configs.items():
     print(f"Saving {dataset_name} ...")
     data_dict = load_dataset(*dataset_config)
+    # print(data_dict)
     dataset = concatenate_datasets([data_dict[k] for k in data_dict.keys()])
+    # print(dataset)
     for col in dataset.column_names:
         if col in globals.new_col_names.keys():
             dataset = dataset.rename_column(col, globals.new_col_names[col])
-    if dataset_name == 'reddit':
-        dataset = dataset.add_column(name="id", column=np.arange(dataset.num_rows))
+    # print(dataset)
+    dataset = dataset.select_columns(['document', 'summary'])
+    # print(dataset)
+    dataset = dataset.add_column(name="id", column=np.arange(dataset.num_rows, dtype=int))
+    # print(dataset)
     data_dict = dataset.train_test_split(test_size=0.3)
+    # print(data_dict)
     path = os.path.join(args.data_dir, dataset_name)
     if not os.path.exists(path):
         os.makedirs(path)

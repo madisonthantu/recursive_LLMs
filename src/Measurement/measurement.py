@@ -14,16 +14,20 @@ from itertools import chain
 from tqdm import tqdm
 import os
 
-sys.path.insert(1, '../Data')
+sys.path.insert(1, '/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data')
 sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs/Data"))
 print(platform.platform())
+sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data"))
+sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data/NRC-Emotion-Intensity-Lexicon/OneFilePerEmotion"))
+# /Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data/NRC-Emotion-Intensity-Lexicon/OneFilePerEmotion/anger-NRC-Emotion-Intensity-Lexicon-v1.txt
 
-import src.Measurement.globals as globals
+import globals as globals
 globals.init()
 
 from googleapiclient.errors import HttpError
 from googleapiclient import discovery
 import requests
+
 
 def formality_query(payload):
     response = requests.post(globals.API_URL, headers=globals.headers, json=payload)
@@ -72,7 +76,7 @@ class Measurement:
         ):
         self.data_df = data_df.copy()
         self.rate_limiter = RateLimiter(**rate_limiter_params)
-        assert(os.path.exists(lex_dir_prefix))
+        # assert(os.path.exists(lex_dir_prefix))
         self.lex_dir_prefix = lex_dir_prefix
         
         assert(k in dataset_specs.keys() for k in ['generation', 'subject']), "Must supply the dataset specs"
@@ -86,9 +90,9 @@ class Measurement:
             'no_samples': no_samples,
             'DEBUG': DEBUG
         }
-        print("\nglobals.sample_idxs =", globals.sample_idxs)
-        print("no_samples =", self.config['no_samples'])
-        print("DEBUG =", self.config['DEBUG'])
+        # print("\nglobals.sample_idxs =", globals.sample_idxs)
+        # print("no_samples =", self.config['no_samples'])
+        # print("DEBUG =", self.config['DEBUG'])
         
     def compute_coverage(self):
         coverage = self.data_df.apply(lambda x: len(set(x['summary_toks']).intersection(set(x['document_toks']))), axis=1)
@@ -121,7 +125,7 @@ class Measurement:
                     print(f"\nFormality Eval - Time limit exceeded, sleeping for 10sec, No. samples evaluated = {idx}")
                     time.sleep(10)
                     idx -= 1
-        return formality_scores, sample_idxs
+        return list(formality_scores), list(sample_idxs)
     
     
     def evaluate_toxicity(self):
@@ -138,13 +142,14 @@ class Measurement:
                     print(f"\nToxicity Eval - Time limit exceeded, sleeping for 69sec, No. samples evaluated = {idx}")
                     time.sleep(69)
                     idx -= 1
-        return toxicity_scores, sample_idxs
+        return list(toxicity_scores), list(sample_idxs)
     
     
     def evaluate_emotion_intensity(
             self,
             lex_dir_suffix = '-NRC-Emotion-Intensity-Lexicon-v1.txt', 
-            lex_names = ['anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust']
+            lex_names = ['anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust'],
+            root_dir = '/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/'
         ):
         """
         What it do: 
@@ -160,14 +165,17 @@ class Measurement:
         
         print("Evaluating emotion intensity ...")
         for LEX in tqdm(lex_names):
-            lex_path = self.lex_dir_prefix + LEX + lex_dir_suffix
+            lex_path = root_dir + self.lex_dir_prefix + LEX + lex_dir_suffix
             lex_df = read_lexicon(lex_path)
             score_var, cnt_var = f"{LEX}_score_avg", f"{LEX}_tok_cnt"
             res = df['summary'].apply(lambda toks: lex_df.index.str.fullmatch('|'.join(toks)))
             emot_scores_df[score_var] = res.apply(lambda emot_toks: lex_df[emot_toks]['intensity_score'].mean()).fillna(0)
             emot_scores_df[cnt_var] = np.stack(res.values, dtype=int).sum(axis=1)
-            w = np.divide(emot_scores_df[cnt_var].to_numpy(), summ_tok_count) * emot_scores_df[score_var].to_numpy()
+            counts = emot_scores_df[cnt_var].to_numpy().astype('float64')
+            w = np.divide(counts, summ_tok_count, out=np.zeros_like(counts), where=summ_tok_count!=0) * emot_scores_df[score_var].to_numpy()
+            print(w)
             weighted_avg = np.add(weighted_avg, w)
+            print(weighted_avg)
             
         emot_scores_df = emot_scores_df.fillna(0)
         emot_scores_df['num_summary_tokens'] = summ_tok_count
@@ -181,15 +189,21 @@ class Measurement:
     def measure(self):
         measurements = {}
         
-        measurements['samples'] = self.data_df.iloc[globals.sample_idxs]['summary']
-        measurements['sample_idxs'] = globals.sample_idxs
+        measurements['samples'] = list(self.data_df.iloc[globals.sample_idxs]['summary'])
+        measurements['sample_idxs'] = list(globals.sample_idxs)
         
+        # print(type(self.data_df['document'].values))
         self.data_df['document_toks'] = self.data_df['document'].apply(lambda sentence: re.findall(r'\w+', sentence.lower()))
         self.data_df['summary_toks'] = self.data_df['summary'].apply(lambda sentence: re.findall(r'\w+', sentence.lower()))
         
-        measurements['coverage'] = self.compute_coverage()
-        measurements['compression_ratio'] = self.compute_compression_ratio()
-        measurements['summary_token_distribution'] = self.compute_summary_token_distribution()
+        measurements['average_doc_toks'] = sum(self.data_df['document_toks'].apply(lambda doc: len(doc))) / self.data_df.shape[0]
+        measurements['average_summ_toks'] = sum(self.data_df['summary_toks'].apply(lambda doc: len(doc))) / self.data_df.shape[0]
+        print("measurements['average_doc_toks']\n\t", measurements['average_doc_toks'])
+        print("measurements['average_summ_toks']\n\t", measurements['average_summ_toks'])
+        
+        measurements['coverage'] = self.compute_coverage().item()
+        measurements['compression_ratio'] = self.compute_compression_ratio().item()
+        measurements['summary_token_distribution'] = dict(self.compute_summary_token_distribution())
         
         formality_eval = self.evaluate_formality()
         toxicity_eval = self.evaluate_toxicity()
@@ -197,13 +211,16 @@ class Measurement:
         measurements['formality_scores'], measurements['formality_sample_idxs'] = formality_eval
         measurements['toxicity_scores'], measurements['toxicity_sample_idxs'] = toxicity_eval
         
-        measurements['formality_mean'] = measurements['formality_scores'].mean()
-        measurements['toxicity_mean'] = measurements['toxicity_scores'].mean()
+        measurements['formality_mean'] = measurements['formality_scores'].mean().item()
+        measurements['toxicity_mean'] = measurements['toxicity_scores'].mean().item()
         
         emot_df = self.evaluate_emotion_intensity()
-        measurements['emotion_intensity_mean'] = emot_df['weighted_avg'].to_numpy().mean()
+        measurements['emotion_intensity_mean'] = emot_df['weighted_avg'].to_numpy().mean().item()
         measurements['emotion_intensity_measurements'] = emot_df.to_dict()
         
+        for k, v in measurements.items():
+            measurements
+        # sys.exit()
         return {
             'config': self.config, 
             'metrics': measurements
