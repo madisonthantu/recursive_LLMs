@@ -141,6 +141,14 @@ class ModelArguments:
             )
         },
     )
+    base_model: str = field(
+        default=None,
+        metadata={
+            "help": (
+                "Base model string."
+            )
+        },
+    )
 
 
 @dataclass
@@ -381,7 +389,7 @@ def main():
     
     assert(data_args.dataset_name in dataset_names), "Must supply valid <dataset_name>"
     assert(model_names[0] in training_args.output_dir or model_names[1] in training_args.output_dir or model_names[2] in training_args.output_dir), "Must include <base_model_name> in output directory path"
-    if data_args.DEBUG != True:
+    if data_args.DEBUG == False:
         if data_args.test_file is not None:
             assert(data_args.dataset_name in data_args.test_file), "<test_data> path and <dataset_name> do not match"
         if data_args.validation_file is not None:
@@ -392,6 +400,7 @@ def main():
     assert(data_args.dataset_name in training_args.output_dir.lower()), "Must include <dataset_name> in output directory path"
     assert(data_args.text_column is not None), "Must specify the name of the <text_column>"
     assert(data_args.summary_column is not None), "Must specify the name of the <summary_column>"
+    assert(model_args.base_model in model_names), "Must supply name of base model to <base_model>"
     
 
     # Setup logging
@@ -733,6 +742,11 @@ def main():
             prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
             result["gen_len"] = np.mean(prediction_lens)
             return result
+        
+        
+        # def postprocess_generated_predictions(pred):
+        #     return pred_stripped if pred_stripped else " "
+        
 
         # Override the decoding parameters of Seq2SeqTrainer
         training_args.generation_max_length = (
@@ -807,12 +821,41 @@ def main():
 
             if trainer.is_world_process_zero():
                 if training_args.predict_with_generate:
+                    
                     predictions = predict_results.predictions
+                    print()
+                    print(type(predictions))
+                    print(predictions.shape)
+                    # print(predictions[:2])
+                    
                     predictions = np.where(predictions != -100, predictions, tokenizer.pad_token_id)
+                    print()
+                    print(type(predictions))
+                    print(predictions.shape)
+                    # print(predictions[:2])
+                    
+                    predictions = predictions[~np.all(predictions == tokenizer.pad_token_id, axis=1)]
+                    print()
+                    print(type(predictions))
+                    print(predictions.shape)
+                    # print(predictions[:2])
+                    
                     predictions = tokenizer.batch_decode(
                         predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
                     )
+                    print()
+                    print(type(predictions))
+                    print(len(predictions))
+                    print(predictions[:2])
+                    
                     predictions = [pred.strip() for pred in predictions]
+                    # predictions = postprocess_generated_predictions(predictions)
+                    print()
+                    print(type(predictions))
+                    print(len(predictions))
+                    print(predictions[:2])
+                    print()
+                    
                     output_prediction_file = os.path.join(training_args.output_dir, "generated_predictions.txt")
                     with open(output_prediction_file, "w") as writer:
                         writer.write("\n".join(predictions))
@@ -821,7 +864,7 @@ def main():
                     if not os.path.exists(output_synthetic_data_path):
                         os.makedirs(output_synthetic_data_path)
                     synthetic_df = pd.read_csv(data_args.test_file)
-                    synthetic_df['summary'] = predictions
+                    synthetic_df['summary'] = pd.Series(predictions)
                     print("synthetic_df shape: ", synthetic_df.shape)
                     synthetic_df.to_csv(os.path.join(output_synthetic_data_path, 'full_data.csv'), index=False)
                     dev_dataset = train_test_split(synthetic_df)
@@ -832,10 +875,12 @@ def main():
                     if not os.path.exists(output_measurements_path):
                         os.makedirs(output_measurements_path)
                     dataset_specs = {
+                        'model':model_args.base_model,
                         'generation':gen_num, 
                         'subject':data_args.dataset_name
                     }
-                    synthetic_dataset_measurements = Measurement(synthetic_df, dataset_specs, DEBUG=True)
+                    print(data_args.DEBUG)
+                    synthetic_dataset_measurements = Measurement(synthetic_df, dataset_specs, DEBUG=data_args.DEBUG)
                     synthetic_dataset_results = synthetic_dataset_measurements.measure()
                     synthetic_dataset_results.update(dataset_specs)
                     save_files_to_pkl({

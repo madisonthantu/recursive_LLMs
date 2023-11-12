@@ -80,11 +80,15 @@ class Measurement:
             no_samples = 10
             globals.sample_idxs = [i for i in range(0,10)]
         self.config = {
+            'base_model':dataset_specs['model'],
             'subject': dataset_specs['subject'],
             'generation': dataset_specs['generation'],
             'no_samples': no_samples,
             'DEBUG': DEBUG
         }
+        print("\nglobals.sample_idxs =", globals.sample_idxs)
+        print("no_samples =", self.config['no_samples'])
+        print("DEBUG =", self.config['DEBUG'])
         
     def compute_coverage(self):
         coverage = self.data_df.apply(lambda x: len(set(x['summary_toks']).intersection(set(x['document_toks']))), axis=1)
