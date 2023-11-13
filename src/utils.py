@@ -1,7 +1,3 @@
-import src.Measurement.globals as globals
-globals.init()
-print(globals.API_URL)
-
 import os
 import sys
 import argparse
@@ -13,8 +9,12 @@ import pandas as pd
 import textwrap
 import json 
 
-sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS 6998/Final Project/recursive_LLMs"))
+sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS 6998/Final Project/recursive_LLMs/src"))
 sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs"))
+
+import Measurement.globals as globals
+globals.init()
+print(globals.API_URL)
 
 from datasets import concatenate_datasets, load_dataset, DatasetDict, Dataset
 from huggingface_hub import login
@@ -41,10 +41,10 @@ def save_dict_to_json(file_path, file_name, my_dict):
         json.dump(my_dict, outfile)
     
     
-def load_pickle(file_path, file_name):
-    # check_valid_path(file_path, file_name)
-    with open(os.path.join(file_path , file_name), 'rb') as f:
-        return pickle.load(f)
+# def load_pickle(file_path, file_name):
+#     # check_valid_path(file_path, file_name)
+#     with open(os.path.join(file_path , file_name), 'rb') as f:
+#         return pickle.load(f)
     
     
 def load_synthetic_dataset(synthetic_data_path, file_name):

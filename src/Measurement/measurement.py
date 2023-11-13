@@ -83,6 +83,7 @@ class Measurement:
         if DEBUG:
             no_samples = 10
             globals.sample_idxs = [i for i in range(0,10)]
+            print("*** DEBUG MODE **********************")
         self.config = {
             'base_model':dataset_specs['model'],
             'subject': dataset_specs['subject'],
@@ -111,7 +112,8 @@ class Measurement:
     def evaluate_formality(self):
         print("Evaluating formality ...")
         sample_idxs = globals.rng.choice(self.data_df.shape[0], size=self.config['no_samples'], replace=False)
-        formality_scores = np.zeros(self.config['no_samples'])
+        formality_scores = np.empty(self.config['no_samples'])
+        formality_scores[:] = np.nan
         print("Evaluating formality ...")
         for idx in tqdm(range(self.config['no_samples'])):
             with self.rate_limiter:
@@ -119,13 +121,18 @@ class Measurement:
                     "inputs": self.data_df.iloc[sample_idxs[idx]]['summary']
                 })
                 try:
-                    formality_scores[idx] = response[0][0]['score']
+                    formality_scores[idx] = response[0][0]['score'] if response[0][0]['label']=='formal' else response[0][1]['score']
+                    # if idx < 10:
+                        # score = response[0][0]['score'] if response[0][0]['label']=='formal' else response[0][1]['score']
+                        # print(self.data_df.iloc[sample_idxs[idx]]['summary'])
+                        # print("\n\n", response)
+                        # print(formality_scores[idx])
                 except:
                     assert('error' in response.keys())
                     print(f"\nFormality Eval - Time limit exceeded, sleeping for 10sec, No. samples evaluated = {idx}")
                     time.sleep(10)
                     idx -= 1
-        return list(formality_scores), list(sample_idxs)
+        return formality_scores, sample_idxs
     
     
     def evaluate_toxicity(self):
@@ -138,11 +145,16 @@ class Measurement:
                 try:
                     response = toxicity_query(self.data_df.iloc[int(sample_idxs[idx])]['summary'])
                     toxicity_scores[idx] = response['attributeScores']['TOXICITY']['summaryScore']['value']
+                    # if idx < 10:
+                        # print("\n", "\n", dict(response))
+                        # print(self.data_df.iloc[int(sample_idxs[idx])]['summary'])
+                        # print(response)
+                        # print(toxicity_scores[idx])
                 except HttpError:
                     print(f"\nToxicity Eval - Time limit exceeded, sleeping for 69sec, No. samples evaluated = {idx}")
                     time.sleep(69)
                     idx -= 1
-        return list(toxicity_scores), list(sample_idxs)
+        return toxicity_scores, sample_idxs
     
     
     def evaluate_emotion_intensity(
@@ -208,18 +220,21 @@ class Measurement:
         formality_eval = self.evaluate_formality()
         toxicity_eval = self.evaluate_toxicity()
         
-        measurements['formality_scores'], measurements['formality_sample_idxs'] = formality_eval
-        measurements['toxicity_scores'], measurements['toxicity_sample_idxs'] = toxicity_eval
+        formality_scores, formality_sample_idxs = formality_eval
+        measurements['formality_mean'] = float(np.nanmean(formality_scores))
+        measurements['formality_scores'] = list(formality_scores)
+        measurements['formality_sample_idxs'] = list(formality_sample_idxs)
         
-        measurements['formality_mean'] = measurements['formality_scores'].mean().item()
-        measurements['toxicity_mean'] = measurements['toxicity_scores'].mean().item()
+        toxicity_scores, toxicity_sample_idxs = toxicity_eval
+        measurements['toxicity_mean'] = float(np.nanmean(toxicity_scores))
+        measurements['toxicity_scores'] = list(toxicity_scores)
+        measurements['toxicity_sample_idxs'] = list(toxicity_sample_idxs)
         
         emot_df = self.evaluate_emotion_intensity()
         measurements['emotion_intensity_mean'] = emot_df['weighted_avg'].to_numpy().mean().item()
         measurements['emotion_intensity_measurements'] = emot_df.to_dict()
         
-        for k, v in measurements.items():
-            measurements
+        print(measurements)
         # sys.exit()
         return {
             'config': self.config, 

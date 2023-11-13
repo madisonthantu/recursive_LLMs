@@ -37,7 +37,10 @@ if __name__ == "__main__":
     parser.add_argument('--generation', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
     parser.add_argument('--model', type=str, default=None)
+    parser.add_argument('--DEBUG', type=bool, default=0)
+    
     args = parser.parse_args()
+    # print(args.DEBUG)
     output_measurements_path = args.output_dir
     # assert(not os.path.exists(output_measurements_path))
     print(output_measurements_path)
@@ -55,7 +58,7 @@ if __name__ == "__main__":
         'no_validation_samples':pd.read_csv(os.path.join(args.data_path, 'validation_data.csv')).shape[0]
     }
     print(dataset_specs)
-    measurements = Measurement(data_df, dataset_specs)
+    measurements = Measurement(data_df, dataset_specs, DEBUG=args.DEBUG)
     output_measurements_path = args.output_dir
         
     results = measurements.measure()
