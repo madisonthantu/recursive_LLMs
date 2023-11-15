@@ -40,7 +40,6 @@ def main():
     dataset = dataset.filter(lambda sample: sample['document'] != '')
     dataset = dataset.filter(lambda sample: sample['summary'] != '')
     print(dataset)
-    x = dataset.filter(lambda sample: sample['id'] == 6054)
     data_dict = dataset.train_test_split(test_size=0.3)
     path = os.path.join(args.data_dir, dataset_name)
     if not os.path.exists(path):
