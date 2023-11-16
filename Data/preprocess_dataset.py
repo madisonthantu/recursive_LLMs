@@ -12,7 +12,7 @@ import numpy as np
 from datasets import load_dataset
 
 def main():
-    parser = argparse.ArgumentParser(description='running parameter experiments')
+    parser = argparse.ArgumentParser(description='running dataset preprocessing')
     parser.add_argument('--data_dir', type=str, default='synthetic_datasets')
     parser.add_argument('--file_name', type=str, default='full_data.csv')
     parser.add_argument('--dataset_name', type=str, default='')
