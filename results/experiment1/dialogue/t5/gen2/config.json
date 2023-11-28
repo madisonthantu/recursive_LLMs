@@ -1,5 +1,5 @@
 {
-  "_name_or_path": "results/experiment1/dialogue/t5/gen1",
+  "_name_or_path": "results/experiment1/dialogue/t5/gen2",
   "architectures": [
     "T5ForConditionalGeneration"
   ],
