@@ -55,7 +55,6 @@ if __name__ == "__main__":
         assert(f"gen{args.generation}" in args.data_path)
         assert(f"gen{args.generation}" in args.output_dir)
     print(output_measurements_path)
-    assert(not os.path.exists(output_measurements_path))
     
 
     data_df = pd.read_csv(os.path.join(args.data_path, 'full_data.csv'))#, index_col='id')
