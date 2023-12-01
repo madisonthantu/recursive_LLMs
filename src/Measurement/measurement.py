@@ -114,9 +114,13 @@ class Measurement:
         for idx in tqdm(range(self.config['no_samples'])):
             with self.rate_limiter:
                 input_text = self.data_df[self.data_df['id'] == sample_idxs[idx]]['summary'].values[0]
-                response = formality_query({
-                    "inputs": input_text
-                })
+                try:
+                    response = formality_query({
+                        "inputs": input_text
+                    })
+                except requests.exceptions.JSONDecodeError:
+                    print(idx, input_text)
+                    sys.exit()
                 try:
                     formality_scores[idx] = response[0][0]['score'] if response[0][0]['label']=='formal' else response[0][1]['score']
                     # print(formality_scores[idx], " - ", input_text)

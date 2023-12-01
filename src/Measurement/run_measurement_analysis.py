@@ -66,14 +66,21 @@ if __name__ == "__main__":
         'model':args.model,
         'no_total_samples':data_df.shape[0],
     }
+    if args.model == 'baseline':
+        dataset_specs['no_train_samples'] = pd.read_csv(os.path.join(args.data_path, 'training_data.csv')).shape[0]
+        dataset_specs['no_validation_samples'] = pd.read_csv(os.path.join(args.data_path, 'validation_data.csv')).shape[0]
+        print("No. training samples =", dataset_specs['no_train_samples'])
+        print("No. validation samples =", dataset_specs['no_validation_samples'])
+    else:
+        f = open(os.path.join(args.data_path, 'config.json'))
+        data_config = json.load(f)
+        with open(os.path.join(args.output_dir, "dataset_config.json"), "w") as outfile:
+            json.dump(data_config, outfile)
+    
     # if os.path.exists(args.data_path, 'training_data.csv'):
     #     dataset_specs['no_training_samples'] = pd.read_csv(os.path.join(args.data_path, 'training_data.csv')).shape[0],
     # if os.path.exists(args.data_path, 'validation_data.csv'):
     #     dataset_specs['no_training_samples'] = pd.read_csv(os.path.join(args.data_path, 'validation_data.csv')).shape[0],
-    f = open(os.path.join(args.data_path, 'config.json'))
-    data_config = json.load(f)
-    with open(os.path.join(args.output_dir, "dataset_config.json"), "w") as outfile:
-        json.dump(data_config, outfile)
         
     print(dataset_specs)
     measurements = Measurement(data_df, dataset_specs, DEBUG=args.DEBUG)

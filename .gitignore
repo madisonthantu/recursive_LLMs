@@ -9,7 +9,7 @@ langgen/
 *.bin
 *.langgen
 *.pyc
-*config.json
+# *config.json
 *map.json
 *state.json
 *tokenizer.json
