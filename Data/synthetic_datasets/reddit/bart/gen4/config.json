@@ -1,0 +1,1 @@
+{"base_model": "bart", "gen_num": 4, "dataset_name": "reddit", "DEBUG": false, "num_samples": 21070}
