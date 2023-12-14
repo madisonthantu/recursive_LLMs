@@ -1,1 +1,0 @@
-{"base_model": "t5", "gen_num": 2, "dataset_name": "reddit", "DEBUG": false, "num_samples": 21070}
