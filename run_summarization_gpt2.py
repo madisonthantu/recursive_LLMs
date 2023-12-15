@@ -25,6 +25,10 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Optional
 import json
+import torch
+from torch.nn.functional import softmax
+
+from tqdm import tqdm
 
 import datasets
 import evaluate
@@ -35,22 +39,24 @@ from filelock import FileLock
 
 import transformers
 from transformers import (
+    DataCollatorForLanguageModeling, 
+    GPT2Tokenizer, 
+    GPT2LMHeadModel, 
+    Trainer, 
+    TrainingArguments, 
     AutoConfig,
-    AutoModelForSeq2SeqLM,
-    AutoTokenizer,
-    DataCollatorForSeq2Seq,
     HfArgumentParser,
-    MBart50Tokenizer,
-    MBart50TokenizerFast,
-    MBartTokenizer,
-    MBartTokenizerFast,
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
     set_seed,
 )
+
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, is_offline_mode, send_example_telemetry
+from transformers.utils import logging as HF_log
 from transformers.utils.versions import require_version
+
+# REF: https://discuss.huggingface.co/t/how-to-turn-wandb-off-in-trainer/6237
+os.environ["WANDB_DISABLED"] = "true"
+
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -69,9 +75,6 @@ except (LookupError, OSError):
         )
     with FileLock(".lock") as lock:
         nltk.download("punkt", quiet=True)
-
-# A list of all multilingual tokenizer which require lang attribute.
-MULTILINGUAL_TOKENIZERS = [MBartTokenizer, MBartTokenizerFast, MBart50Tokenizer, MBart50TokenizerFast]
 
 
 @dataclass
@@ -280,9 +283,6 @@ class DataTrainingArguments:
             "help": "Whether to ignore the tokens corresponding to padded labels in the loss computation or not."
         },
     )
-    source_prefix: Optional[str] = field(
-        default=None, metadata={"help": "A prefix to add before every source text (useful for T5 models)."}
-    )
 
     forced_bos_token: Optional[str] = field(
         default=None,
@@ -347,9 +347,7 @@ dataset_names = [
 ]
 
 model_names = [
-    't5',
-    'bart',
-    'gpt'
+    'gpt2'
 ]
 
 summarization_name_mapping = {
@@ -358,13 +356,27 @@ summarization_name_mapping = {
     "reddit": ("documents", "tldr")
 }
 
+bos = '<|endoftext|>'
+eos = '<|EOS|>'
+pad = '<|pad|>'
+
+special_tokens_dict = {
+    'eos_token': eos, 
+    'bos_token': bos, 
+    'pad_token': pad
+}
+max_target_lenghts = {
+    'news':175,
+    'reddit':100,
+    'dialogue':100
+}
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, Seq2SeqTrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -410,7 +422,7 @@ def main():
         assert("initial_datasets" in data_args.data_path if data_args.data_path is not None else 1)
     else:
         assert("synthetic_datasets" in data_args.train_file if data_args.train_file is not None else 1)
-        # assert("synthetic_datasets" in data_args.validation_file if data_args.validation_file is not None else 1)
+        assert("synthetic_datasets" in data_args.validation_file if data_args.validation_file is not None else 1)
         assert("synthetic_datasets" in data_args.test_file if data_args.test_file is not None else 1)
         assert("synthetic_datasets" in data_args.data_path if data_args.data_path is not None else 1)
         
@@ -445,18 +457,6 @@ def main():
     )
     logger.info(f"Training/evaluation parameters {training_args}")
 
-    if data_args.source_prefix is None and model_args.model_name_or_path in [
-        "t5-small",
-        "t5-base",
-        "t5-large",
-        "t5-3b",
-        "t5-11b",
-    ]:
-        logger.warning(
-            "You're running a t5 model but didn't provide a source prefix, which is the expected, e.g. with "
-            "`--source_prefix 'summarize: ' `"
-        )
-
     # Detecting last checkpoint.
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
@@ -474,18 +474,8 @@ def main():
     if training_args.do_train and last_checkpoint is None and model_args.gen_num != 0:
         assert(str(model_args.gen_num-1) in model_args.model_name_or_path), "Previous generation number should be in path for model checkpoint."
 
-    # Set seed before initializing model.
     set_seed(training_args.seed)
-
-    # Get the datasets: you can either provide your own CSV/JSON training and evaluation files (see below)
-    # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
-    # (the dataset will be downloaded automatically from the datasets Hub).
-    #
-    # For CSV/JSON files this script will use the first column for the full texts and the second column for the
-    # summaries (unless you specify column names for this with the `text_column` and `summary_column` arguments).
-    #
-    # In distributed training, the load_dataset function guarantee that only one local process can concurrently
-    # download the dataset.
+    
     data_files = {}
     if data_args.data_path is not None:
         data_files["train"] = os.path.join(data_args.data_path, 'training_data.csv')
@@ -510,22 +500,7 @@ def main():
         token=model_args.token,
     )
     
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.html.
-
-    # Load pretrained model and tokenizer
-    #
-    # Distributed training:
-    # The .from_pretrained methods guarantee that only one local process can concurrently
-    # download model & vocab.
-    config = AutoConfig.from_pretrained(
-        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        token=model_args.token,
-        trust_remote_code=model_args.trust_remote_code,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = GPT2Tokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
@@ -533,7 +508,27 @@ def main():
         token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
     )
-    model = AutoModelForSeq2SeqLM.from_pretrained(
+    num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
+    tokenizer.padding_side = 'left'
+    target_length = max_target_lenghts[data_args.dataset_name]
+    separator = " TL;DR "
+    separator_ids = tokenizer.encode(separator)
+    separator_length = len(separator_ids)
+    separator_attention_mask = [1] * separator_length
+    separator_length = len(tokenizer.tokenize(separator))
+    global_max_length = tokenizer.model_max_length
+    src_length = global_max_length - separator_length - target_length
+    
+    config = AutoConfig.from_pretrained(
+        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        bos_token_id=tokenizer.bos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.pad_token_id,
+        trust_remote_code=model_args.trust_remote_code,
+    )
+    model = GPT2LMHeadModel.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
@@ -541,46 +536,9 @@ def main():
         revision=model_args.model_revision,
         token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
-        from_pt=True
     )
-
-    # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
-    # on a small vocab and want a smaller embedding size, remove this test.
-    embedding_size = model.get_input_embeddings().weight.shape[0]
-    if len(tokenizer) > embedding_size:
-        model.resize_token_embeddings(len(tokenizer))
-
-    if model.config.decoder_start_token_id is None and isinstance(tokenizer, (MBartTokenizer, MBartTokenizerFast)):
-        if isinstance(tokenizer, MBartTokenizer):
-            model.config.decoder_start_token_id = tokenizer.lang_code_to_id[data_args.lang]
-        else:
-            model.config.decoder_start_token_id = tokenizer.convert_tokens_to_ids(data_args.lang)
-
-    if model.config.decoder_start_token_id is None:
-        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
-
-    if (
-        hasattr(model.config, "max_position_embeddings")
-        and model.config.max_position_embeddings < data_args.max_source_length
-    ):
-        if model_args.resize_position_embeddings is None:
-            logger.warning(
-                "Increasing the model's number of position embedding vectors from"
-                f" {model.config.max_position_embeddings} to {data_args.max_source_length}."
-            )
-            model.resize_position_embeddings(data_args.max_source_length)
-        elif model_args.resize_position_embeddings:
-            model.resize_position_embeddings(data_args.max_source_length)
-        else:
-            raise ValueError(
-                f"`--max_source_length` is set to {data_args.max_source_length}, but the model only has"
-                f" {model.config.max_position_embeddings} position encodings. Consider either reducing"
-                f" `--max_source_length` to {model.config.max_position_embeddings} or to automatically resize the"
-                " model's position encodings by passing `--resize_position_embeddings`."
-            )
-
-    prefix = data_args.source_prefix if data_args.source_prefix is not None else ""
-
+    model.resize_token_embeddings(len(tokenizer))
+    
     # Preprocessing the datasets.
     # We need to tokenize inputs and targets.
     if training_args.do_train:
@@ -598,21 +556,6 @@ def main():
     else:
         logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
         return
-
-    if isinstance(tokenizer, tuple(MULTILINGUAL_TOKENIZERS)):
-        assert (
-            data_args.lang is not None
-        ), f"{tokenizer.__class__.__name__} is a multilingual tokenizer which requires --lang argument"
-
-        tokenizer.src_lang = data_args.lang
-        tokenizer.tgt_lang = data_args.lang
-
-        # For multilingual translation models like mBART-50 and M2M100 we need to force the target language token
-        # as the first generated token. We ask the user to explicitly provide this as --forced_bos_token argument.
-        forced_bos_token_id = (
-            tokenizer.lang_code_to_id[data_args.forced_bos_token] if data_args.forced_bos_token is not None else None
-        )
-        model.config.forced_bos_token_id = forced_bos_token_id
 
     # Get the column names for input/target.
     dataset_columns = summarization_name_mapping.get(data_args.dataset_name, None)
@@ -633,54 +576,38 @@ def main():
                 f"--summary_column' value '{data_args.summary_column}' needs to be one of: {', '.join(column_names)}"
             )
 
-    # Temporarily set max_target_length for training.
-    max_target_length = data_args.max_target_length
-    padding = "max_length" if data_args.pad_to_max_length else False
+    def preprocess_function(examples): 
+        model_input = torch.full((1, tokenizer.model_max_length), tokenizer.pad_token_id)
+        doc_ids = tokenizer.encode(bos + ' ' + examples[text_column], padding='do_not_pad', max_length=src_length, truncation=True, return_tensors='pt')
+        summ_ids = tokenizer.encode(" TL;DR " + examples[summary_column], padding='do_not_pad', max_length=target_length-1, truncation=True, return_tensors='pt')
+        in_put = torch.cat((doc_ids, summ_ids, torch.Tensor([[tokenizer.eos_token_id]])), axis=1)
+        model_input[0,model_input.shape[1]-in_put.shape[1]:] = in_put
+            
+        input_ids = model_input
+        attention_mask = torch.where(model_input!=tokenizer.pad_token_id, 1, 0)
+        return {
+            'input_ids':input_ids,
+            'attention_mask':attention_mask
+        }
+    
+    def preprocess_generation_function(example):
+        inputs = bos + ' ' + example[text_column]
+        targets = example[summary_column]
 
-    if training_args.label_smoothing_factor > 0 and not hasattr(model, "prepare_decoder_input_ids_from_labels"):
-        logger.warning(
-            "label_smoothing is enabled but the `prepare_decoder_input_ids_from_labels` method is not defined for "
-            f"`{model.__class__.__name__}`. This will lead to loss being calculated twice and will take up more memory"
-        )
-
-    def preprocess_function(examples):
-        # remove pairs where at least one record is None
-        print("******************"*3)
-        print(len(examples))
-        print("******************"*3)
-        inputs, targets = [], []
-        for i in range(len(examples[text_column])):
-            if examples[text_column][i] and examples[summary_column][i]:
-                inputs.append(examples[text_column][i])
-                targets.append(examples[summary_column][i])
-
-        inputs = [prefix + inp for inp in inputs]
-        model_inputs = tokenizer(inputs, max_length=data_args.max_source_length, padding=padding, truncation=True)
-
-        # Tokenize targets with the `text_target` keyword argument
-        labels = tokenizer(text_target=targets, max_length=max_target_length, padding=padding, truncation=True)
-
-        # If we are padding here, replace all tokenizer.pad_token_id in the labels by -100 when we want to ignore
-        # padding in the loss.
-        if padding == "max_length" and data_args.ignore_pad_token_for_loss:
-            labels["input_ids"] = [
-                [(l if l != tokenizer.pad_token_id else -100) for l in label] for label in labels["input_ids"]
-            ]
-
-        model_inputs["labels"] = labels["input_ids"]
-        print(model_inputs)
+        model_inputs = tokenizer(inputs, padding='max_length', max_length=src_length, truncation=True)
+        model_inputs['input_ids'] = model_inputs['input_ids'] + separator_ids
+        model_inputs['attention_mask'] = model_inputs['attention_mask'] + separator_attention_mask
+        # target_ids = tokenizer(targets, padding='max_length', max_length=target_length, truncation=True)
+        # model_inputs['label_ids'] = target_ids['input_ids']
         return model_inputs
     
     
     if training_args.do_train:
         train_dataset = raw_datasets["train"]
-        if data_args.max_train_samples is not None:
-            max_train_samples = min(len(train_dataset), data_args.max_train_samples)
-            train_dataset = train_dataset.select(range(max_train_samples))
         with training_args.main_process_first(desc="train dataset map pre-processing"):
             train_dataset = train_dataset.map(
                 preprocess_function,
-                batched=True,
+                batched=False,
                 num_proc=data_args.preprocessing_num_workers,
                 remove_columns=column_names,
                 load_from_cache_file=not data_args.overwrite_cache,
@@ -688,15 +615,11 @@ def main():
             )
 
     if training_args.do_eval:
-        max_target_length = data_args.val_max_target_length
         eval_dataset = raw_datasets["validation"]
-        if data_args.max_eval_samples is not None:
-            max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
-            eval_dataset = eval_dataset.select(range(max_eval_samples))
         with training_args.main_process_first(desc="validation dataset map pre-processing"):
             eval_dataset = eval_dataset.map(
                 preprocess_function,
-                batched=True,
+                batched=False,
                 num_proc=data_args.preprocessing_num_workers,
                 remove_columns=column_names,
                 load_from_cache_file=not data_args.overwrite_cache,
@@ -704,92 +627,88 @@ def main():
             )
 
     if training_args.do_predict:
-        max_target_length = data_args.val_max_target_length
         predict_dataset = raw_datasets["test"]
-        if data_args.max_predict_samples is not None:
-            max_predict_samples = min(len(predict_dataset), data_args.max_predict_samples)
-            print(max_predict_samples)
-            predict_dataset = predict_dataset.select(range(max_predict_samples))
         with training_args.main_process_first(desc="prediction dataset map pre-processing"):
             predict_dataset = predict_dataset.map(
-                preprocess_function,
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
+                preprocess_generation_function,
+                batched=False,
+                # num_proc=data_args.preprocessing_num_workers,
                 # remove_columns=column_names,
                 load_from_cache_file=not data_args.overwrite_cache,
                 desc="Running tokenizer on prediction dataset",
             )
-            print(f"\nPREDICT DATASET:\n{predict_dataset}")
-            sys.exit()
-
-    # Data collator
-    label_pad_token_id = -100 if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id
-    data_collator = DataCollatorForSeq2Seq(
+            predict_dataset.set_format("pt", columns=["input_ids", "attention_mask"], output_all_columns=True) 
+            print(predict_dataset)
+            
+    data_collator = DataCollatorForLanguageModeling(
         tokenizer,
-        model=model,
-        label_pad_token_id=label_pad_token_id,
-        pad_to_multiple_of=8 if training_args.fp16 else None,
+        mlm=False
     )
 
     # Metric
     metric = evaluate.load("rouge")
 
     def postprocess_text(preds, labels):
-        preds = [pred.strip() for pred in preds]
+        labels = [label[label.find("TL;DR")+len("TL;DR"):] for label in labels]
+        preds = [pred[pred.find("TL;DR")+len("TL;DR"):] for pred in preds]
+        # print("\nlabels[0]\n\t", labels[0])
+        # print("\npreds[0]\n\t", preds[0])
         labels = [label.strip() for label in labels]
-
-        # rougeLSum expects newline after each sentence
+        preds = [pred.strip() for pred in preds]
         preds = ["\n".join(nltk.sent_tokenize(pred)) for pred in preds]
         labels = ["\n".join(nltk.sent_tokenize(label)) for label in labels]
-
         return preds, labels
 
+    # REF: https://discuss.huggingface.co/t/cuda-out-of-memory-when-using-trainer-with-compute-metrics/2941/10
+    def preprocess_logits_for_metrics(logits, labels):
+        """
+        Original Trainer may have a memory leak. 
+        This is a workaround to avoid storing too many tensors that are not needed.
+        """
+        pred_ids = torch.argmax(logits, dim=-1)
+        return pred_ids, labels
+    
     def compute_metrics(eval_preds):
-        preds, labels = eval_preds
-        if isinstance(preds, tuple):
-            preds = preds[0]
+        pred_ids = eval_preds.predictions
+        if isinstance(pred_ids, tuple):
+            pred_ids = pred_ids[0]
+        pred_ids = np.squeeze(pred_ids)
+        label_ids = eval_preds.label_ids
         # Replace -100s used for padding as we can't decode them
-        preds = np.where(preds != -100, preds, tokenizer.pad_token_id)
-        decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-        labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
-        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
-
-        # Some simple post-processing
-        decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
-
+        pred_ids = np.where(pred_ids != -100, pred_ids, tokenizer.pad_token_id)
+        pred_strs = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+        label_ids = np.squeeze(label_ids)
+        label_ids = np.where(label_ids != -100, label_ids, tokenizer.pad_token_id)
+        label_strs = tokenizer.batch_decode(label_ids, skip_special_tokens=True)
+        decoded_preds, decoded_labels = postprocess_text(pred_strs, label_strs)
         result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
         result = {k: round(v * 100, 4) for k, v in result.items()}
-        prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
+        prediction_lens = [len(tokenizer.tokenize(dec_pred)) for dec_pred in decoded_preds]
         result["gen_len"] = np.mean(prediction_lens)
         return result
-
-    # Override the decoding parameters of Seq2SeqTrainer
-    training_args.generation_max_length = (
-        training_args.generation_max_length
-        if training_args.generation_max_length is not None
-        else data_args.val_max_target_length
-    )
-    training_args.generation_num_beams = (
-        data_args.num_beams if data_args.num_beams is not None else training_args.generation_num_beams
-    )
+    
+    def compute_generation_metrics(pred_strs, label_strs):
+        decoded_preds, decoded_labels = postprocess_text(pred_strs, label_strs)
+        result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
+        result = {k: round(v * 100, 4) for k, v in result.items()}
+        prediction_lens = [len(tokenizer.tokenize(pred)) for pred in pred_strs]
+        result["gen_len"] = np.mean(prediction_lens)
+        return result
+    
     training_args.num_train_epochs = (
         data_args.num_epochs if data_args.num_epochs is not None else training_args.num_train_epochs
     )
-    print("\ndata_files:\n", data_files, "\n")
-    print("\ntraining_args:\n", training_args, "\n")
-    print("\nmodel_args:\n", model_args, "\n")
-    print("\ndata_args:\n", data_args, "\n")
-    # sys.exit()
 
     # Initialize our Trainer
-    trainer = Seq2SeqTrainer(
+    trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        compute_metrics=compute_metrics if training_args.predict_with_generate else None,
+        compute_metrics=compute_metrics,
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics
     )
 
     # Training
@@ -807,7 +726,6 @@ def main():
             data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
         )
         metrics["train_samples"] = min(max_train_samples, len(train_dataset))
-
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
         trainer.save_state()
@@ -828,51 +746,67 @@ def main():
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
-
+        
+    
+    def postprocess_generations(pred_strs):
+        preds = [pred[pred.find("TL;DR")+len("TL;DR"):] for pred in pred_strs]
+        preds = [pred.strip() for pred in preds]
+        return preds
+        
+    
     if training_args.do_predict:
         logger.info("*** Predict ***")
-
-        predict_results = trainer.predict(predict_dataset, metric_key_prefix="predict")
-        metrics = predict_results.metrics
-        max_predict_samples = (
-            data_args.max_predict_samples if data_args.max_predict_samples is not None else len(predict_dataset)
-        )
-        metrics["predict_samples"] = min(max_predict_samples, len(predict_dataset))
+        logger.setLevel(logging.WARNING)
+        # print(f"logger.level = {logger.level}")
+        HF_log.set_verbosity_warning()
+        # model = model.to('cpu')
+        pred_strs = []
+        label_strs = predict_dataset[summary_column]
+        
+        n = 5
+        for i in tqdm(range(0, len(predict_dataset), n), total=int(len(predict_dataset)/n)):
+            sample_dataset = predict_dataset[i:i+n]
+            # print(i)
+            # print(sample_dataset)
+            output_ids = model.generate(
+                input_ids=sample_dataset['input_ids'].to("cuda"),
+                attention_mask=sample_dataset['attention_mask'].to("cuda"),
+                do_sample=False,
+                early_stopping=True,
+                max_new_tokens = target_length
+            )
+            pred_strs += tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+            # print(pred_strs[-1])
+            
+        pred_strs = postprocess_generations(pred_strs)
+        metrics = compute_generation_metrics(pred_strs, label_strs)
+        metrics["predict_samples"] = len(predict_dataset)
 
         trainer.log_metrics("predict", metrics)
         trainer.save_metrics("predict", metrics)
 
         if trainer.is_world_process_zero():
-            if training_args.predict_with_generate:
-                predictions = predict_results.predictions
-                predictions = np.where(predictions != -100, predictions, tokenizer.pad_token_id)
-                predictions = tokenizer.batch_decode(
-                    predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
-                )
-                synthetic_data_df = predict_dataset.select_columns(['document','id']).to_pandas()
-                print(synthetic_data_df.head(5))
-                synthetic_data_df['summary'] = predictions
-                synthetic_data_df['summary'] = synthetic_data_df['summary'].apply(lambda summ: summ.strip())
-                print(synthetic_data_df.head(5))
+            # if training_args.predict_with_generate:
+            # predictions = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+            synthetic_data_df = predict_dataset.select_columns(['document','id']).to_pandas()
+            print(synthetic_data_df.head(5))
+            synthetic_data_df['summary'] = pred_strs
+            synthetic_data_df['summary'] = synthetic_data_df['summary'].apply(lambda summ: summ.strip())
+            print(synthetic_data_df.head(5))
 
-                output_synthetic_data_path = os.path.join("Data/synthetic_datasets", str(data_args.dataset_name), model_args.base_model, f"gen{model_args.gen_num}")
-                if not os.path.exists(output_synthetic_data_path):
-                    os.makedirs(output_synthetic_data_path)
-                synthetic_data_df.to_csv(os.path.join(output_synthetic_data_path, 'full_data.csv'), index=False)
-                config = {
-                    'base_model': model_args.base_model,
-                    'gen_num': model_args.gen_num,
-                    'dataset_name': data_args.dataset_name,
-                    'DEBUG': data_args.DEBUG,
-                    'num_samples': synthetic_data_df.shape[0]
-                }
-                with open(os.path.join(output_synthetic_data_path, 'config.json'), 'w') as f:
-                   json.dump(config, f)
-                
-                predictions = [pred.strip() for pred in predictions]
-                output_prediction_file = os.path.join(training_args.output_dir, "generated_predictions.txt")
-                with open(output_prediction_file, "w") as writer:
-                    writer.write("\n".join(predictions))
+            output_synthetic_data_path = os.path.join("Data/synthetic_datasets", str(data_args.dataset_name), model_args.base_model, f"gen{model_args.gen_num}")
+            if not os.path.exists(output_synthetic_data_path):
+                os.makedirs(output_synthetic_data_path)
+            synthetic_data_df.to_csv(os.path.join(output_synthetic_data_path, 'full_data.csv'), index=False)
+            config = {
+                'base_model': model_args.base_model,
+                'gen_num': model_args.gen_num,
+                'dataset_name': data_args.dataset_name,
+                'DEBUG': data_args.DEBUG,
+                'num_samples': synthetic_data_df.shape[0]
+            }
+            with open(os.path.join(output_synthetic_data_path, 'config.json'), 'w') as f:
+                json.dump(config, f)
 
     kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "summarization"}
     if data_args.dataset_name is not None:
