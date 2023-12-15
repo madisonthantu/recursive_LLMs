@@ -1,0 +1,1 @@
+{"base_model": "gpt2", "gen_num": 2, "dataset_name": "reddit", "DEBUG": false, "num_samples": 20285}
