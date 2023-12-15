@@ -51,11 +51,16 @@ from transformers import (
 
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, is_offline_mode, send_example_telemetry
+from transformers.utils import logging as HF_log
 from transformers.utils.versions import require_version
+
+# REF: https://discuss.huggingface.co/t/how-to-turn-wandb-off-in-trainer/6237
+os.environ["WANDB_DISABLED"] = "true"
+
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-# check_min_version("4.36.0.dev0")
+check_min_version("4.36.0.dev0")
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/summarization/requirements.txt")
 
@@ -366,12 +371,6 @@ max_target_lenghts = {
     'dialogue':100
 }
 
-if torch.backends.mps.is_available():  
-    dev = "mps" 
-else:  
-    dev = "cpu"  
-device = torch.device(dev)  
-
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -510,8 +509,12 @@ def main():
         trust_remote_code=model_args.trust_remote_code,
     )
     num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
+    tokenizer.padding_side = 'left'
     target_length = max_target_lenghts[data_args.dataset_name]
     separator = " TL;DR "
+    separator_ids = tokenizer.encode(separator)
+    separator_length = len(separator_ids)
+    separator_attention_mask = [1] * separator_length
     separator_length = len(tokenizer.tokenize(separator))
     global_max_length = tokenizer.model_max_length
     src_length = global_max_length - separator_length - target_length
@@ -573,34 +576,30 @@ def main():
                 f"--summary_column' value '{data_args.summary_column}' needs to be one of: {', '.join(column_names)}"
             )
 
-    def preprocess_function(examples):
-        input_ids = []
-        attention_mask = []
-        for i in range(len(examples)):
-            model_input = torch.full((1, tokenizer.model_max_length), tokenizer.pad_token_id)
-            doc_ids = tokenizer.encode(special_tokens_dict['bos_token'] + ' ' + examples[text_column][i], padding='do_not_pad', max_length=src_length, truncation=True, return_tensors='pt')
-            summ_ids = tokenizer.encode(" TL;DR " + examples[summary_column][i], padding='do_not_pad', max_length=target_length-1, truncation=True, return_tensors='pt')
-            in_put = torch.cat((doc_ids, summ_ids, torch.Tensor([[tokenizer.eos_token_id]])), dim=1)
-            model_input[0, model_input.shape[1]-in_put.shape[1]:] = in_put
+    def preprocess_function(examples): 
+        model_input = torch.full((1, tokenizer.model_max_length), tokenizer.pad_token_id)
+        doc_ids = tokenizer.encode(bos + ' ' + examples[text_column], padding='do_not_pad', max_length=src_length, truncation=True, return_tensors='pt')
+        summ_ids = tokenizer.encode(" TL;DR " + examples[summary_column], padding='do_not_pad', max_length=target_length-1, truncation=True, return_tensors='pt')
+        in_put = torch.cat((doc_ids, summ_ids, torch.Tensor([[tokenizer.eos_token_id]])), axis=1)
+        model_input[0,model_input.shape[1]-in_put.shape[1]:] = in_put
             
-            input_ids.append(model_input)
-            attention_mask.append(torch.where(model_input!=tokenizer.pad_token_id, 1, 0))
-            
+        input_ids = model_input
+        attention_mask = torch.where(model_input!=tokenizer.pad_token_id, 1, 0)
         return {
             'input_ids':input_ids,
             'attention_mask':attention_mask
         }
     
-    def preprocess_generation_function(examples):
-        inputs = []
-        targets = []
-        for i in range(len(examples)):
-            inputs.append(torch.cat((tokenizer.encode(bos + examples[text_column][i], padding='do_not_pad', max_length=src_length, truncation=True, return_tensors='pt'), tokenizer.encode(separator, return_tensors='pt')), dim=1))
-            targets.append(tokenizer.encode(examples[summary_column][i], padding='do_not_pad', max_length=target_length, truncation=True, return_tensors='pt'))
-        return {
-            'input_ids':inputs,
-            'label_ids':targets
-        }
+    def preprocess_generation_function(example):
+        inputs = bos + ' ' + example[text_column]
+        targets = example[summary_column]
+
+        model_inputs = tokenizer(inputs, padding='max_length', max_length=src_length, truncation=True)
+        model_inputs['input_ids'] = model_inputs['input_ids'] + separator_ids
+        model_inputs['attention_mask'] = model_inputs['attention_mask'] + separator_attention_mask
+        # target_ids = tokenizer(targets, padding='max_length', max_length=target_length, truncation=True)
+        # model_inputs['label_ids'] = target_ids['input_ids']
+        return model_inputs
     
     
     if training_args.do_train:
@@ -608,7 +607,7 @@ def main():
         with training_args.main_process_first(desc="train dataset map pre-processing"):
             train_dataset = train_dataset.map(
                 preprocess_function,
-                batched=True,
+                batched=False,
                 num_proc=data_args.preprocessing_num_workers,
                 remove_columns=column_names,
                 load_from_cache_file=not data_args.overwrite_cache,
@@ -620,7 +619,7 @@ def main():
         with training_args.main_process_first(desc="validation dataset map pre-processing"):
             eval_dataset = eval_dataset.map(
                 preprocess_function,
-                batched=True,
+                batched=False,
                 num_proc=data_args.preprocessing_num_workers,
                 remove_columns=column_names,
                 load_from_cache_file=not data_args.overwrite_cache,
@@ -638,7 +637,8 @@ def main():
                 load_from_cache_file=not data_args.overwrite_cache,
                 desc="Running tokenizer on prediction dataset",
             )
-            predict_dataset.set_format("pt", columns=["input_ids", "label_ids"], output_all_columns=True) 
+            predict_dataset.set_format("pt", columns=["input_ids", "attention_mask"], output_all_columns=True) 
+            print(predict_dataset)
             
     data_collator = DataCollatorForLanguageModeling(
         tokenizer,
@@ -651,13 +651,15 @@ def main():
     def postprocess_text(preds, labels):
         labels = [label[label.find("TL;DR")+len("TL;DR"):] for label in labels]
         preds = [pred[pred.find("TL;DR")+len("TL;DR"):] for pred in preds]
-        print("\nlabels[0]\n\t", labels[0])
-        print("\npreds[0]\n\t", preds[0])
+        # print("\nlabels[0]\n\t", labels[0])
+        # print("\npreds[0]\n\t", preds[0])
         labels = [label.strip() for label in labels]
+        preds = [pred.strip() for pred in preds]
         preds = ["\n".join(nltk.sent_tokenize(pred)) for pred in preds]
         labels = ["\n".join(nltk.sent_tokenize(label)) for label in labels]
         return preds, labels
 
+    # REF: https://discuss.huggingface.co/t/cuda-out-of-memory-when-using-trainer-with-compute-metrics/2941/10
     def preprocess_logits_for_metrics(logits, labels):
         """
         Original Trainer may have a memory leak. 
@@ -670,31 +672,26 @@ def main():
         pred_ids = eval_preds.predictions
         if isinstance(pred_ids, tuple):
             pred_ids = pred_ids[0]
+        pred_ids = np.squeeze(pred_ids)
         label_ids = eval_preds.label_ids
         # Replace -100s used for padding as we can't decode them
         pred_ids = np.where(pred_ids != -100, pred_ids, tokenizer.pad_token_id)
         pred_strs = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+        label_ids = np.squeeze(label_ids)
         label_ids = np.where(label_ids != -100, label_ids, tokenizer.pad_token_id)
         label_strs = tokenizer.batch_decode(label_ids, skip_special_tokens=True)
         decoded_preds, decoded_labels = postprocess_text(pred_strs, label_strs)
         result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
         result = {k: round(v * 100, 4) for k, v in result.items()}
-        prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in pred_ids]
+        prediction_lens = [len(tokenizer.tokenize(dec_pred)) for dec_pred in decoded_preds]
         result["gen_len"] = np.mean(prediction_lens)
         return result
     
-    def compute_generation_metrics(pred_ids, label_ids):
-        if isinstance(pred_ids, tuple):
-            pred_ids = pred_ids[0]
-        # Replace -100s used for padding as we can't decode them
-        # pred_ids = np.where(pred_ids != -100, pred_ids, tokenizer.pad_token_id)
-        pred_strs = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-        # label_ids = np.where(label_ids != -100, label_ids, tokenizer.pad_token_id)
-        label_strs = tokenizer.batch_decode(label_ids, skip_special_tokens=True)
+    def compute_generation_metrics(pred_strs, label_strs):
         decoded_preds, decoded_labels = postprocess_text(pred_strs, label_strs)
         result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
         result = {k: round(v * 100, 4) for k, v in result.items()}
-        prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in pred_ids]
+        prediction_lens = [len(tokenizer.tokenize(pred)) for pred in pred_strs]
         result["gen_len"] = np.mean(prediction_lens)
         return result
     
@@ -751,24 +748,38 @@ def main():
         trainer.save_metrics("eval", metrics)
         
     
+    def postprocess_generations(pred_strs):
+        preds = [pred[pred.find("TL;DR")+len("TL;DR"):] for pred in pred_strs]
+        preds = [pred.strip() for pred in preds]
+        return preds
+        
     
     if training_args.do_predict:
         logger.info("*** Predict ***")
-        # predict_results = trainer.predict(predict_dataset, metric_key_prefix="predict")
-        pred_ids = []
-        label_ids = []
-        for i, sample in tqdm(enumerate(predict_dataset)):
-            input_ids = sample['input_ids'][0]
-            output = model.generate(
-                input_ids,
-                max_new_tokens=target_length,
-                early_stopping=True
+        logger.setLevel(logging.WARNING)
+        # print(f"logger.level = {logger.level}")
+        HF_log.set_verbosity_warning()
+        # model = model.to('cpu')
+        pred_strs = []
+        label_strs = predict_dataset[summary_column]
+        
+        n = 5
+        for i in tqdm(range(0, len(predict_dataset), n), total=int(len(predict_dataset)/n)):
+            sample_dataset = predict_dataset[i:i+n]
+            # print(i)
+            # print(sample_dataset)
+            output_ids = model.generate(
+                input_ids=sample_dataset['input_ids'].to("cuda"),
+                attention_mask=sample_dataset['attention_mask'].to("cuda"),
+                do_sample=False,
+                early_stopping=True,
+                max_new_tokens = target_length
             )
-            print(f"[{i}] - ", tokenizer.decode(output[0]))
-            pred_ids.append(output)
-            label_ids.append(sample['label_ids'][0])
+            pred_strs += tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+            # print(pred_strs[-1])
             
-        metrics = compute_generation_metrics(pred_ids, label_ids)
+        pred_strs = postprocess_generations(pred_strs)
+        metrics = compute_generation_metrics(pred_strs, label_strs)
         metrics["predict_samples"] = len(predict_dataset)
 
         trainer.log_metrics("predict", metrics)
@@ -776,10 +787,10 @@ def main():
 
         if trainer.is_world_process_zero():
             # if training_args.predict_with_generate:
-            predictions = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+            # predictions = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
             synthetic_data_df = predict_dataset.select_columns(['document','id']).to_pandas()
             print(synthetic_data_df.head(5))
-            synthetic_data_df['summary'] = predictions
+            synthetic_data_df['summary'] = pred_strs
             synthetic_data_df['summary'] = synthetic_data_df['summary'].apply(lambda summ: summ.strip())
             print(synthetic_data_df.head(5))
 
@@ -796,8 +807,6 @@ def main():
             }
             with open(os.path.join(output_synthetic_data_path, 'config.json'), 'w') as f:
                 json.dump(config, f)
-            
-            predictions = [pred.strip() for pred in predictions]
 
     kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "summarization"}
     if data_args.dataset_name is not None:
