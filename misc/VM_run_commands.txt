@@ -1,0 +1,176 @@
+LOCAL ...
+
+*** INITIAL dataset ********************************
+python src/Measurement/run_measurement_analysis.py \
+    --data_path /Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data/initial_datasets/reddit/sharded \
+    --dataset_name reddit \
+    --generation baseline \
+    --output_dir results/baseline/reddit/sharded \
+    --model baseline
+
+
+python src/Measurement/run_measurement_analysis.py \
+    --data_path /Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data/initial_datasets/news/sharded \
+    --dataset_name news \
+    --generation baseline \
+    --output_dir results/baseline/news/sharded \
+    --model baseline
+
+
+
+*** SYNTHETIC dataset ********************************
+python src/Measurement/run_measurement_analysis.py \
+    --data_path /Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data/synthetic_datasets/reddit/gpt2/no_early_stopping/gen2 \
+    --dataset_name reddit \
+    --generation 2 \
+    --output_dir results/experiment1/reddit/gpt2/no_early_stopping/gen2 \
+    --model gpt2
+    
+
+
+VM ...
+
+*** PRE-PROCESS SYNTHETIC ********************************
+
+python initial_datasets_to_disk.py \
+    --dataset_name news
+
+
+python preprocess_dataset.py \
+    --data_dir synthetic_datasets/reddit/gpt2/no_early_stopping/gen1 \
+    --file_name full_data.csv \
+    --dataset_name reddit
+
+
+
+python run_summarization.py \
+    --model_name_or_path results/experiment1/news/t5/gen2 \
+    --do_predict 1 \
+    --test_file Data/synthetic_datasets/news/t5/gen1/full_data.csv \
+    --num_epochs 1 \
+    --output_dir results/experiment1/news/t5/gen2 \
+    --per_device_train_batch_size=4 \
+    --per_device_eval_batch_size=4 \
+    --predict_with_generate 1 \
+    --gen_num 2 \
+    --dataset_name news \
+    --base_model t5 \
+    --overwrite_cache 1 \
+    --DEBUG 0
+
+
+
+
+run_summarization.py :: *** BOTH TUNE AND PREDICT ********************************
+python run_summarization.py \
+    --model_name_or_path results/experiment1/news/t5/gen2 \
+    --do_train 1 \
+    --do_eval 1 \
+    --do_predict 1 \
+    --data_path Data/synthetic_datasets/news/t5/gen2 \
+    --num_epochs 1 \
+    --output_dir results/experiment1/news/t5/gen3 \
+    --per_device_train_batch_size=4 \
+    --per_device_eval_batch_size=4 \
+    --predict_with_generate 1 \
+    --gen_num 3 \
+    --dataset_name news \
+    --base_model t5 \
+    --overwrite_cache 1 \
+    --DEBUG 0
+
+
+
+run_summarization_gpt2.py :: *** BOTH TUNE AND PREDICT ********************************
+python run_summarization_gpt2.py \
+    --model_name_or_path gpt2 \
+    --do_train 1 \
+    --do_eval 1 \
+    --train_file Data/initial_datasets/reddit/training_data.csv \
+    --validation_file Data/initial_datasets/reddit/validation_data.csv \
+    --num_epochs 1 \
+    --output_dir results/experiment1/reddit/gpt2/gen0 \
+    --per_device_train_batch_size=1 \
+    --per_device_eval_batch_size=1 \
+    --gen_num 0 \
+    --dataset_name reddit \
+    --base_model gpt2 \
+    --overwrite_cache 1 \
+    --DEBUG 0
+
+python run_summarization_gpt2.py \
+    --model_name_or_path results/experiment1/reddit/gpt2/gen0 \
+    --do_train 1 \
+    --do_eval 1 \
+    --do_predict 1 \
+    --data_path Data/synthetic_datasets/reddit/gpt2/gen0 \
+    --num_epochs 1 \
+    --output_dir results/experiment1/reddit/gpt2/gen1 \
+    --per_device_train_batch_size=1 \
+    --per_device_eval_batch_size=1 \
+    --gen_num 1 \
+    --dataset_name reddit \
+    --base_model gpt2 \
+    --overwrite_cache 1 \
+    --DEBUG 0
+
+
+python run_summarization_gpt2.py \
+    --model_name_or_path results/experiment1/reddit/gpt2/no_early_stopping/gen1 \
+    --do_train 1 \
+    --do_eval 1 \
+    --do_predict 1 \
+    --data_path Data/synthetic_datasets/reddit/gpt2/no_early_stopping/gen1 \
+    --num_epochs 1 \
+    --output_dir results/experiment1/reddit/gpt2/no_early_stopping/gen2 \
+    --per_device_train_batch_size=1 \
+    --per_device_eval_batch_size=1 \
+    --gen_num 2 \
+    --dataset_name reddit \
+    --base_model gpt2 \
+    --overwrite_cache 1 \
+    --DEBUG 0
+
+
+*** Evaluate on initial dataset
+python run_summarization.py \
+    --model_name_or_path results/experiment1/news/t5/gen3 \
+    --do_eval 1 \
+    --validation_file Data/initial_datasets/news/validation_data.csv \
+    --num_epochs 1 \
+    --output_dir results/experiment1/news/t5/gen3/baseline_eval \
+    --per_device_train_batch_size=4 \
+    --per_device_eval_batch_size=4 \
+    --predict_with_generate 1 \
+    --gen_num 3 \
+    --dataset_name news \
+    --base_model t5 \
+    --overwrite_cache 1 \
+    --DEBUG 0
+
+python run_summarization.py \
+    --model_name_or_path results/experiment1/dialogue/bart/gen4 \
+    --do_eval 1 \
+    --validation_file Data/initial_datasets/dialogue/validation_data.csv \
+    --num_epochs 1 \
+    --output_dir results/experiment1/dialogue/bart/gen4/baseline_eval \
+    --per_device_train_batch_size=4 \
+    --per_device_eval_batch_size=4 \
+    --predict_with_generate 1 \
+    --gen_num 4 \
+    --dataset_name dialogue \
+    --base_model bart \
+    --overwrite_cache 1 \
+    --DEBUG 0
+
+python compute_metrics.py \
+    --synth_data_path synthetic_datasets/reddit/gpt2/no_early_stopping/gen2 \
+    --init_data_path initial_datasets/reddit/sharded \
+    --dataset_name reddit \
+    --base_model gpt2
+
+python compute_metrics.py \
+    --synth_data_path synthetic_datasets/dialogue/bart/gen3 \
+    --init_data_path initial_datasets/dialogue \
+    --dataset_name dialogue \
+    --base_model bart

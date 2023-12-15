@@ -1,8 +1,0 @@
-{
-    "gen_len": 97.09477077019291,
-    "predict_samples": 20787,
-    "rouge1": 39.616,
-    "rouge2": 22.9282,
-    "rougeL": 38.2969,
-    "rougeLsum": 35.9706
-}

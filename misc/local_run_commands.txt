@@ -1,0 +1,25 @@
+
+python run_experiments_encoder_decoder.py \
+    --model_name_or_path t5-base \
+    --do_train 0 \
+    --do_eval 0 \
+    --do_predict 1 \
+    --test_file Data/initial_datasets/dialogue/full_data.csv \
+    --text_column document \
+    --summary_column summary \
+    --source_prefix "summarize: " \
+    --output_dir test/t5/gen_baseline \
+    --per_device_train_batch_size=4 \
+    --per_device_eval_batch_size=4 \
+    --predict_with_generate 1 \
+    --num_generations 1 \
+    --dataset_name dialogue \
+    --overwrite_cache True 
+
+
+python run_measurement_analysis.py \
+	--data_path /Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data/initial_datasets/news \
+    --dataset_name news \
+    --generation baseline \
+    --output_dir results/experiment1/news/baseline \
+    --model baseline
