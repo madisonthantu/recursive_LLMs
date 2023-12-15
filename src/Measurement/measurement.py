@@ -13,16 +13,19 @@ from ratelimiter import RateLimiter
 from itertools import chain
 from tqdm import tqdm
 import os
+from random import sample
 
 sys.path.insert(1, '/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data')
 sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs/Data"))
 print(platform.platform())
-sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data"))
-sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data/NRC-Emotion-Intensity-Lexicon/OneFilePerEmotion"))
+# sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data"))
+# sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data/NRC-Emotion-Intensity-Lexicon/OneFilePerEmotion"))
 # /Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/Data/NRC-Emotion-Intensity-Lexicon/OneFilePerEmotion/anger-NRC-Emotion-Intensity-Lexicon-v1.txt
 
-import globals as globals
+from Measurement import globals as globals
 globals.init()
+from utils import *
+init()
 
 from googleapiclient.errors import HttpError
 from googleapiclient import discovery
@@ -30,6 +33,9 @@ import requests
 
 
 def formality_query(payload):
+    """
+    REF: https://huggingface.co/s-nlp/roberta-base-formality-ranker?inference_api=true
+    """
     response = requests.post(globals.API_URL, headers=globals.headers, json=payload)
     return response.json()
 
@@ -49,6 +55,9 @@ def read_csv_dataset(text_path):
 
 
 def toxicity_query(text):
+    """
+    REF: https://developers.perspectiveapi.com/s/docs-sample-requests?language=en_US
+    """
     analyze_request = {
         'comment': { 'text': text },
         'requestedAttributes': {'TOXICITY': {}}
@@ -60,6 +69,7 @@ def toxicity_query(text):
 def preprocess_dataset(df):
     text_df = df.rename(columns=globals.new_col_names)
     text_df['summary'] = text_df['summary'].apply(lambda sentence: re.findall(r'\w+', sentence.lower()))
+    text_df['summary'] = text_df['summary'].apply(lambda sentence: [word for word in sentence if len(word) > 1])
     return text_df[['id', 'document', 'summary']]
 
 
@@ -76,7 +86,6 @@ class Measurement:
         ):
         self.data_df = data_df.copy()
         self.rate_limiter = RateLimiter(**rate_limiter_params)
-        # assert(os.path.exists(lex_dir_prefix))
         self.lex_dir_prefix = lex_dir_prefix
         
         assert(k in dataset_specs.keys() for k in ['generation', 'subject']), "Must supply the dataset specs"
@@ -91,9 +100,6 @@ class Measurement:
             'no_samples': no_samples,
             'DEBUG': DEBUG
         }
-        # print("\nglobals.sample_idxs =", globals.sample_idxs)
-        # print("no_samples =", self.config['no_samples'])
-        # print("DEBUG =", self.config['DEBUG'])
         
     def compute_coverage(self):
         coverage = self.data_df.apply(lambda x: len(set(x['summary_toks']).intersection(set(x['document_toks']))), axis=1)
@@ -110,23 +116,30 @@ class Measurement:
     
     
     def evaluate_formality(self):
-        print("Evaluating formality ...")
-        sample_idxs = globals.rng.choice(self.data_df.shape[0], size=self.config['no_samples'], replace=False)
+        # Had to change computing of sample_idxs to handle the deletion of rows with `None` values, which occurs with GPT2 output
+        # sample_idxs = globals.rng.choice(self.data_df.shape[0], size=self.config['no_samples'], replace=False)
+        sample_idxs = sample(self.data_df['id'].tolist(), self.config['no_samples'])
         formality_scores = np.empty(self.config['no_samples'])
         formality_scores[:] = np.nan
         print("Evaluating formality ...")
+        # REF: for rate limiting - https://akshayranganath.github.io/Rate-Limiting-With-Python/
         for idx in tqdm(range(self.config['no_samples'])):
             with self.rate_limiter:
-                response = formality_query({
-                    "inputs": self.data_df.iloc[sample_idxs[idx]]['summary']
-                })
+                try:
+                    input_text = self.data_df[self.data_df['id'] == sample_idxs[idx]]['summary'].values[0]
+                except:
+                    print(self.data_df[self.data_df['id'] == sample_idxs[idx]])
+                    sys.exit()
+                try:
+                    response = formality_query({
+                        "inputs": input_text
+                    })
+                except requests.exceptions.JSONDecodeError:
+                    print("\n", idx, "\n", input_text, "\n", response)
+                    sys.exit()
                 try:
                     formality_scores[idx] = response[0][0]['score'] if response[0][0]['label']=='formal' else response[0][1]['score']
-                    # if idx < 10:
-                        # score = response[0][0]['score'] if response[0][0]['label']=='formal' else response[0][1]['score']
-                        # print(self.data_df.iloc[sample_idxs[idx]]['summary'])
-                        # print("\n\n", response)
-                        # print(formality_scores[idx])
+                    # print(formality_scores[idx], " - ", input_text)
                 except:
                     assert('error' in response.keys())
                     print(f"\nFormality Eval - Time limit exceeded, sleeping for 10sec, No. samples evaluated = {idx}")
@@ -137,22 +150,24 @@ class Measurement:
     
     def evaluate_toxicity(self):
         print("Evaluating toxicity ...")
-        sample_idxs = globals.rng.choice(self.data_df.shape[0], size=self.config['no_samples'], replace=False).astype(int)
-        toxicity_scores = np.zeros(self.config['no_samples'])
+        # Had to change computing of sample_idxs to handle the deletion of rows with `None` values, which occurs with GPT2 output
+        # sample_idxs = globals.rng.choice(self.data_df.shape[0], size=self.config['no_samples'], replace=False).astype(int)
+        sample_idxs = sample(self.data_df['id'].tolist(), self.config['no_samples'])
+        toxicity_scores = np.empty(self.config['no_samples'])
+        toxicity_scores[:] = np.nan
         print("Evaluating toxicity")
         for idx in tqdm(range(self.config['no_samples'])):
+            # REF: for rate limiting - https://akshayranganath.github.io/Rate-Limiting-With-Python/
             with self.rate_limiter:
                 try:
-                    response = toxicity_query(self.data_df.iloc[int(sample_idxs[idx])]['summary'])
+                    print(sample_idxs[idx])
+                    input_text = self.data_df[self.data_df['id'] == sample_idxs[idx]]['summary'].values[0]
+                    response = toxicity_query(input_text)
                     toxicity_scores[idx] = response['attributeScores']['TOXICITY']['summaryScore']['value']
-                    # if idx < 10:
-                        # print("\n", "\n", dict(response))
-                        # print(self.data_df.iloc[int(sample_idxs[idx])]['summary'])
-                        # print(response)
-                        # print(toxicity_scores[idx])
+                    # print(toxicity_scores[idx], " - ", input_text)
                 except HttpError:
-                    print(f"\nToxicity Eval - Time limit exceeded, sleeping for 69sec, No. samples evaluated = {idx}")
-                    time.sleep(69)
+                    print(f"\nToxicity Eval - Time limit exceeded, sleeping for 10sec, No. samples evaluated = {idx}")
+                    time.sleep(10)
                     idx -= 1
         return toxicity_scores, sample_idxs
     
@@ -169,29 +184,32 @@ class Measurement:
             the value corresponds to the sum of intensity scores divided by the 
             number of tokens in the summary.
         """
-        print("Evaluating emotion intensity ...")
         df = preprocess_dataset(self.data_df)
         emot_scores_df = pd.DataFrame()
         summ_tok_count = df['summary'].apply(lambda x: len(x)).to_numpy()
-        weighted_avg = np.zeros(df.shape[0])
         
         print("Evaluating emotion intensity ...")
-        for LEX in tqdm(lex_names):
+        
+        emot_score_vars = [f"{LEX}_score_sum" for LEX in lex_names]
+        emot_tok_cnt_vars = [f"{LEX}_tok_cnt" for LEX in lex_names]
+        
+        for i, LEX in tqdm(enumerate(lex_names)):
+            print(f"\t... Evaluating {LEX}")
             lex_path = root_dir + self.lex_dir_prefix + LEX + lex_dir_suffix
             lex_df = read_lexicon(lex_path)
-            score_var, cnt_var = f"{LEX}_score_avg", f"{LEX}_tok_cnt"
+            assert(LEX in emot_score_vars[i] and LEX in emot_tok_cnt_vars[i])
+            score_var, cnt_var = emot_score_vars[i], emot_tok_cnt_vars[i]
             res = df['summary'].apply(lambda toks: lex_df.index.str.fullmatch('|'.join(toks)))
-            emot_scores_df[score_var] = res.apply(lambda emot_toks: lex_df[emot_toks]['intensity_score'].mean()).fillna(0)
+            emot_scores_df[score_var] = res.apply(lambda emot_toks: lex_df[emot_toks]['intensity_score'].sum()).fillna(0)
             emot_scores_df[cnt_var] = np.stack(res.values, dtype=int).sum(axis=1)
-            counts = emot_scores_df[cnt_var].to_numpy().astype('float64')
-            w = np.divide(counts, summ_tok_count, out=np.zeros_like(counts), where=summ_tok_count!=0) * emot_scores_df[score_var].to_numpy()
-            print(w)
-            weighted_avg = np.add(weighted_avg, w)
-            print(weighted_avg)
             
-        emot_scores_df = emot_scores_df.fillna(0)
         emot_scores_df['num_summary_tokens'] = summ_tok_count
-        emot_scores_df["weighted_avg"] = weighted_avg
+        emot_intensity_sum = emot_scores_df[emot_score_vars].sum(axis=1)
+        emot_tok_cnt_sum = emot_scores_df[emot_tok_cnt_vars].sum(axis=1)
+        intensity_avg = emot_intensity_sum.divide(emot_tok_cnt_sum)
+        emot_scores_df["intensity_ratio"] = intensity_avg * emot_tok_cnt_sum.divide(emot_scores_df['num_summary_tokens'])
+        emot_scores_df = emot_scores_df.fillna(0)
+        
         emot_scores_df['id'] = df['id']
         emot_scores_df.set_index('id')
             
@@ -231,11 +249,9 @@ class Measurement:
         measurements['toxicity_sample_idxs'] = list(toxicity_sample_idxs)
         
         emot_df = self.evaluate_emotion_intensity()
-        measurements['emotion_intensity_mean'] = emot_df['weighted_avg'].to_numpy().mean().item()
+        measurements['intensity_ratio_avg'] = emot_df['intensity_ratio'].to_numpy().mean().item()
         measurements['emotion_intensity_measurements'] = emot_df.to_dict()
         
-        print(measurements)
-        # sys.exit()
         return {
             'config': self.config, 
             'metrics': measurements

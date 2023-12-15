@@ -9,9 +9,9 @@ import pandas as pd
 import textwrap
 import json 
 
-sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS 6998/Final Project/recursive_LLMs/src"))
-sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs"))
-
+# sys.path.append(os.path.abspath("/Users/madisonthantu/Desktop/COMS 6998/Final Project/recursive_LLMs/src"))
+# sys.path.append(os.path.abspath("/home/madisonthantu/recursive_LLMs/src/Measurement"))
+sys.path.insert(1, '/Users/madisonthantu/Desktop/COMS_6998/Final_Project/recursive_LLMs/src')
 import Measurement.globals as globals
 globals.init()
 print(globals.API_URL)
@@ -70,8 +70,8 @@ class ListDataset(Dataset):
         return self.original_list[i]
     
     
-def prettyprint(text):
-    print(textwrap.fill(text, 150))
+def prettyprint(text, val=150):
+    print(textwrap.fill(text, val))
     
 
 def prettyprint_dict(d, indent=0, skip_list=['summary_token_distribution', 'samples', 'emotion_intensity_measurements']):
